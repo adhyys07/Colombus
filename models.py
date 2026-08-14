@@ -25,18 +25,22 @@ class Rating:
     score: float | None = None
 
     @classmethod
-    def parse(cls, source: str, value: str) -> "Rating":
+    def parse(cls, source: str, value: str) -> Rating:
         return cls(source=source, value=value, score=_normalise(value))
+
+def _clamp(score: float) -> float:
+    """Keep scores inside the 0-100 range the bars are drawn against."""
+    return min(100.0, max(0.0, score))
 
 def _normalise(value: str) -> float | None:
     value = value.strip()
     if m := re.fullmatch(r"(\d+(?:\.\d+)?)\s*%", value):
-        return float(m.group(1))
+        return _clamp(float(m.group(1)))
     if m := re.fullmatch(r"(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)", value):
         num, den = float(m.group(1)), float(m.group(2))
-        return round(num / den * 100, 1) if den else None
+        return _clamp(round(num / den * 100, 1)) if den else None
     if m := re.fullmatch(r"(\d+(?:\.\d+)?)", value):
-        return float(m.group(1))
+        return _clamp(float(m.group(1)))
     return None
 
 @dataclass
@@ -47,9 +51,11 @@ class Review:
     url: str | None = None
     source: str = "TMDB"
 
-    def excerpt(self, limit:int = 600) -> str:
+    def excerpt(self, limit: int = 600) -> str:
         text = " ".join(self.content.split())
-        return text if len(text) <= limit else text[:limit - 1].rstrip() + "..."
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 3)].rstrip() + "..."
 
 @dataclass
 class Movie:
