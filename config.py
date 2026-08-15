@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +20,7 @@ DEFAULT_CACHE_DIR = Path.home() / ".cache" / "colombus"
 DEFAULT_CACHE_TTL = 7 * 24 * 3600
 DEFAULT_POSTER_SIZE = "w342"
 DEFAULT_HTTP_RETRIES = 3
+DEFAULT_POSTER_PROTOCOL = "auto"
 # Wikimedia rejects generic User-Agents; theirs must carry a contact URL.
 # Override COLOMBUS_USER_AGENT to point at your own project or e-mail.
 DEFAULT_USER_AGENT = (
@@ -31,6 +33,15 @@ _MISSING_TMDB = (
     "environment or a .env file.\n"
     "Get one free at https://www.themoviedb.org/settings/api"
 )
+
+
+def _frozen_env_file() -> Path | None:
+    """A .env sitting beside the executable, for the packaged build."""
+    if getattr(sys, "frozen", False):
+        candidate = Path(sys.executable).resolve().parent / ".env"
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _env_int(name: str, default: int) -> int:
@@ -54,6 +65,7 @@ class Config:
     poster_size: str
     http_retries: int = DEFAULT_HTTP_RETRIES
     user_agent: str = DEFAULT_USER_AGENT
+    poster_protocol: str = DEFAULT_POSTER_PROTOCOL
 
     @property
     def has_omdb(self) -> bool:
@@ -71,6 +83,9 @@ class Config:
         if env_file:
             load_dotenv(env_file)
         else:
+            # Beside the .exe first, then the usual walk up from the cwd.
+            if beside_exe := _frozen_env_file():
+                load_dotenv(beside_exe)
             load_dotenv()
 
         tmdb_key = os.getenv("TMDB_API_KEY") or None
@@ -91,4 +106,7 @@ class Config:
             poster_size=os.getenv("COLOMBUS_POSTER_SIZE") or DEFAULT_POSTER_SIZE,
             http_retries=max(0, _env_int("COLOMBUS_HTTP_RETRIES", DEFAULT_HTTP_RETRIES)),
             user_agent=os.getenv("COLOMBUS_USER_AGENT") or DEFAULT_USER_AGENT,
+            poster_protocol=(
+                os.getenv("COLOMBUS_POSTER_PROTOCOL") or DEFAULT_POSTER_PROTOCOL
+            ).strip().lower(),
         )

@@ -20,8 +20,11 @@ class WikipediaSource:
         self._cache = cache
         self._client = client
 
-    async def _find_page(self, title: str, year: str) -> str | None:
-        term = f"{title} {year} film".strip()
+    async def _find_page(
+        self, title: str, year: str, series: bool = False
+    ) -> str | None:
+        kind = "TV series" if series else "film"
+        term = f"{title} {year} {kind}".strip()
         try:
             response = await self._client.get(
                 self.API,
@@ -41,23 +44,28 @@ class WikipediaSource:
         if not results:
             return None
 
-        # Prefer a page disambiguated as a film over a same-named novel/album.
+        # Prefer a page disambiguated as a film or series over a same-named
+        # novel or album.
+        wanted = ("tv series", "series") if series else ("film",)
         for row in results:
             name = row.get("title", "")
-            if "film" in name.lower():
+            if any(token in name.lower() for token in wanted):
                 return name
         return results[0].get("title")
 
-    async def summary(self, title: str, year: str = "") -> tuple[str, str]:
+    async def summary(
+        self, title: str, year: str = "", series: bool = False
+    ) -> tuple[str, str]:
         """Returns (extract, url), or ("", "") when nothing usable is found."""
         if not title:
             return "", ""
 
-        cache_key = f"wiki:{title.lower()}:{year}"
+        kind = "tv" if series else "movie"
+        cache_key = f"wiki:{kind}:{title.lower()}:{year}"
         if (cached := self._cache.get_json(cache_key)) is not None:
             return cached.get("extract", ""), cached.get("url", "")
 
-        page = await self._find_page(title, year)
+        page = await self._find_page(title, year, series)
         if not page:
             return "", ""
 

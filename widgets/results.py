@@ -20,6 +20,8 @@ class ResultItem(ListItem):
         line = Text(hit.title, style="bold")
         if hit.year:
             line.append(f"  {hit.year}", style="dim")
+        if hit.is_series:
+            line.append("  TV", style="cyan")
         if hit.vote_average:
             line.append(f"  ★{hit.vote_average:.1f}", style="yellow")
         return line

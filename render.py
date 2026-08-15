@@ -61,17 +61,21 @@ def facts_table(movie: Movie) -> Table:
     table.add_column(ratio=1)
 
     rows: list[tuple[str, str]] = [
-        ("Director", movie.director or DASH),
+        ("Creator" if movie.is_series else "Director", movie.director or DASH),
         ("Writers", ", ".join(movie.writers) or DASH),
         ("Cast", ", ".join(movie.cast) or DASH),
         ("Genre", ", ".join(movie.genres) or DASH),
-        ("Runtime", _runtime(movie.runtime)),
+        ("Episode", _runtime(movie.runtime)) if movie.is_series
+        else ("Runtime", _runtime(movie.runtime)),
         ("Rated", movie.certificate or DASH),
         ("Language", ", ".join(filter(None, movie.languages)) or DASH),
         ("Country", ", ".join(filter(None, movie.countries)) or DASH),
-        ("Budget", _money(movie.budget)),
-        ("Revenue", _money(movie.revenue)),
     ]
+    if not movie.is_series:
+        rows += [("Budget", _money(movie.budget)), ("Revenue", _money(movie.revenue))]
+    if movie.is_series:
+        rows.insert(4, ("Seasons", str(movie.seasons) if movie.seasons else DASH))
+        rows.insert(5, ("Episodes", str(movie.episodes) if movie.episodes else DASH))
     if movie.imdb_url:
         rows.append(("IMDb", movie.imdb_url))
 
@@ -84,6 +88,7 @@ def _header(movie: Movie) -> Text:
     header = Text(movie.title, style="bold white")
     if movie.year:
         header.append(f"  ({movie.year})", style="dim")
+    header.append("  SERIES" if movie.is_series else "  FILM", style="dim cyan")
     if movie.tagline:
         header.append(f"\n{movie.tagline}", style="italic dim")
     return header
@@ -121,6 +126,31 @@ def movie_renderable(movie: Movie) -> RenderableType:
             parts.append(
                 Panel(review.excerpt(), title=title, border_style="dim", title_align="left")
             )
+
+    return Group(*parts)
+
+
+def reviews_renderable(movie: Movie) -> RenderableType:
+    """Every review in full, for the Reviews tab."""
+    if not movie.reviews:
+        return message_renderable(f"No reviews on TMDB for {movie.label}.")
+
+    count = len(movie.reviews)
+    header = Text(f"{count} review{'s' if count != 1 else ''}", style="bold")
+    header.append(f"  ·  {movie.label}", style="dim")
+    parts: list[RenderableType] = [header, Rule(style="dim")]
+
+    for index, review in enumerate(movie.reviews, start=1):
+        title = Text(f"{index}. {review.author}", style="bold")
+        if review.rating is not None:
+            title.append(f"  {review.rating:g}/10", style=_score_style(review.rating * 10))
+        if review.date:
+            title.append(f"  {review.date}", style="dim")
+
+        body = Text(" ".join(review.content.split()))
+        if review.url:
+            body.append(f"\n\n{review.url}", style="dim")
+        parts.append(Panel(body, title=title, title_align="left", border_style="dim"))
 
     return Group(*parts)
 

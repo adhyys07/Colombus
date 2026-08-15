@@ -1,7 +1,9 @@
 # Colombus
 
-A terminal movie browser. Search TMDB, then read the metadata, score bars,
-Wikipedia summary and reviews for any result — without leaving your shell.
+A terminal browser for movies and series. Search TMDB, browse what's
+trending, or dig through categories — then read the metadata, score bars,
+Wikipedia summary and reviews for anything you pick, without leaving your
+shell.
 
 ## Install
 
@@ -17,6 +19,21 @@ Add a TMDB credential to `.env` — either the v3 `TMDB_API_KEY` or the v4
 `OMDB_API_KEY` is optional; it adds the IMDb / Rotten Tomatoes / Metacritic
 score line. Everything still works without it.
 
+## Sections
+
+Three sections share one results list, switched with the tabs (or `ctrl+t`):
+
+| Section | What it shows |
+| ------- | ------------- |
+| **Search** | Titles matching your query |
+| **Trending** | What's trending today or this week |
+| **Categories** | Everything in a genre, most popular first |
+
+The **Movies / Series / Both** selector applies to every section, so you can
+browse trending series, search across both at once, or list every title in a
+genre. Series get their own detail layout — creator, season and episode
+counts, and the TV content rating in place of budget and revenue.
+
 ## Usage
 
 ```bash
@@ -31,9 +48,25 @@ python main.py --env path/to/.env
 | `ctrl+s` | focus the search box      |
 | `enter`  | run the search            |
 | `↑` `↓`  | move through results      |
+| `ctrl+t` | next section              |
 | `escape` | jump back to results      |
 | `ctrl+r` | clear the cache           |
 | `ctrl+q` | quit                      |
+
+## Building a Windows .exe
+
+```bash
+pip install pyinstaller
+pyinstaller colombus.spec
+```
+
+This produces a single self-contained `dist/colombus.exe`. Put a `.env` next
+to the executable — the packaged build looks there first, then falls back to
+the current working directory. Run it from a terminal (it is a console app):
+
+```
+dist\colombus.exe "blade runner 2049"
+```
 
 ## Configuration
 
@@ -46,6 +79,7 @@ python main.py --env path/to/.env
 | `COLOMBUS_CACHE_TTL`    | `604800` (7 days)  | cache lifetime in seconds; `0` never expires |
 | `COLOMBUS_POSTER_SIZE`  | `w342`             | TMDB poster width                |
 | `COLOMBUS_HTTP_RETRIES` | `3`                | connection retries; raise it if you see `Could not reach TMDB` |
+| `COLOMBUS_POSTER_PROTOCOL` | `auto`          | poster backend, see below |
 
 ## Layout
 
@@ -61,6 +95,20 @@ python main.py --env path/to/.env
 | `models.py`   | `SearchHit`, `Movie`, `Rating`, `Review`                |
 | `config.py`   | Environment and `.env` loading                          |
 
-Posters render as real pixels in terminals with Kitty graphics or Sixel
-support (via the optional `textual-image` package) and fall back to a text
-placeholder everywhere else.
+## Posters
+
+`COLOMBUS_POSTER_PROTOCOL` picks how posters are drawn:
+
+| Value | Result | Needs |
+| ----- | ------ | ----- |
+| `auto` (default) | best the terminal reports it can do | — |
+| `tgp` / `sixel` | true pixels | Kitty graphics or Sixel support |
+| `halfcell` / `unicode` | coloured blocks | any 24-bit colour terminal |
+| `braille` | coloured 2x4 dot art, ~8x the detail of `ascii` | any terminal |
+| `ascii` | classic density-ramp character art, tinted | any terminal |
+| `none` | text placeholder | — |
+
+`braille` and `ascii` are drawn from the image in-process, so they need no
+graphics protocol at all and work in the plain Windows console. Posters are
+sized to their real aspect ratio, allowing for terminal cells being about
+twice as tall as they are wide.

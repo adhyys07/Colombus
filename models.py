@@ -4,6 +4,10 @@ import re
 from dataclasses import dataclass, field
 
 
+MOVIE = "movie"
+TV = "tv"
+
+
 @dataclass
 class SearchHit:
     tmdb_id: int
@@ -13,10 +17,15 @@ class SearchHit:
     poster_path: str | None
     popularity: float = 0.0
     vote_average: float = 0.0
+    media_type: str = MOVIE
 
     @property
     def label(self) -> str:
         return f"{self.title} ({self.year})" if self.year else self.title
+
+    @property
+    def is_series(self) -> bool:
+        return self.media_type == TV
 
 
 @dataclass
@@ -59,6 +68,12 @@ class Review:
     rating: float | None = None
     url: str | None = None
     source: str = "TMDB"
+    created_at: str = ""
+
+    @property
+    def date(self) -> str:
+        """Just the calendar day from TMDB's ISO timestamp."""
+        return self.created_at[:10]
 
     def excerpt(self, limit: int = 600) -> str:
         """Whitespace-collapsed content, never longer than `limit` characters."""
@@ -71,10 +86,22 @@ class Review:
 
 
 @dataclass
+class Genre:
+    """A TMDB category, used to populate the Categories tab."""
+
+    tmdb_id: int
+    name: str
+    media_type: str = MOVIE
+
+
+@dataclass
 class Movie:
+    """A movie or a series; `media_type` says which."""
+
     tmdb_id: int
     title: str
     year: str = ""
+    media_type: str = MOVIE
     imdb_id: str | None = None
     tagline: str = ""
     runtime: int | None = None
@@ -94,6 +121,12 @@ class Movie:
     languages: list[str] = field(default_factory=list)
     countries: list[str] = field(default_factory=list)
     certificate: str = ""
+    seasons: int | None = None
+    episodes: int | None = None
+
+    @property
+    def is_series(self) -> bool:
+        return self.media_type == TV
 
     @property
     def imdb_url(self) -> str | None:

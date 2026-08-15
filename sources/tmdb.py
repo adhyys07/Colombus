@@ -1,4 +1,8 @@
-"""TMDB: the primary source for search results, metadata and posters."""
+"""TMDB: search, trending, categories, metadata and posters.
+
+Movies and series share one code path; the differing field names
+(title/name, release_date/first_air_date) are normalised on the way in.
+"""
 
 from __future__ import annotations
 
@@ -6,17 +10,34 @@ import httpx
 
 from cache import Cache
 from config import Config
-from models import SearchHit
+from models import MOVIE, TV, Genre, SearchHit
+
+WINDOWS = ("day", "week")
 
 
 class TMDBError(RuntimeError):
     """A TMDB request failed in a way the user needs to know about."""
 
 
+def _row_title(row: dict) -> str:
+    return (
+        row.get("title")
+        or row.get("name")
+        or row.get("original_title")
+        or row.get("original_name")
+        or "Untitled"
+    )
+
+
+def _row_year(row: dict) -> str:
+    return (row.get("release_date") or row.get("first_air_date") or "")[:4]
+
+
 class TMDBSource:
     BASE = "https://api.themoviedb.org/3"
     IMAGE_BASE = "https://image.tmdb.org/t/p"
-    APPEND = "credits,reviews,release_dates,external_ids"
+    MOVIE_APPEND = "credits,reviews,release_dates,external_ids"
+    TV_APPEND = "credits,reviews,content_ratings,external_ids"
 
     def __init__(self, config: Config, cache: Cache, client: httpx.AsyncClient) -> None:
         self._config = config
@@ -24,7 +45,6 @@ class TMDBSource:
         self._client = client
 
     def _auth(self) -> tuple[dict[str, str], dict[str, str]]:
-        """Bearer header for a v4 token, else an api_key query param."""
         headers = self._config.tmdb_headers
         if headers:
             return headers, {}
@@ -79,42 +99,95 @@ class TMDBSource:
             self._cache.set_json(cache_key, data)
         return data
 
-    async def search(self, query: str, limit: int = 30) -> list[SearchHit]:
-        query = query.strip()
-        if not query:
-            return []
+    # ------------------------------------------------------------------ lists
 
-        data = await self._get(
-            "/search/movie",
-            {"query": query, "include_adult": "false"},
-            cache_key=f"tmdb:search:{query.lower()}",
-        )
-
-        hits = [
-            SearchHit(
-                tmdb_id=row["id"],
-                title=row.get("title") or row.get("original_title") or "Untitled",
-                year=(row.get("release_date") or "")[:4],
-                overview=row.get("overview") or "",
-                poster_path=row.get("poster_path"),
-                popularity=float(row.get("popularity") or 0.0),
-                vote_average=float(row.get("vote_average") or 0.0),
+    def _hits(self, data: dict, media_type: str, limit: int) -> list[SearchHit]:
+        hits = []
+        for row in data.get("results", []):
+            if row.get("id") is None:
+                continue
+            # /trending/all mixes in people, who have no poster or title.
+            kind = row.get("media_type") if media_type == "all" else media_type
+            if kind not in (MOVIE, TV):
+                continue
+            hits.append(
+                SearchHit(
+                    tmdb_id=row["id"],
+                    title=_row_title(row),
+                    year=_row_year(row),
+                    overview=row.get("overview") or "",
+                    poster_path=row.get("poster_path"),
+                    popularity=float(row.get("popularity") or 0.0),
+                    vote_average=float(row.get("vote_average") or 0.0),
+                    media_type=kind,
+                )
             )
-            for row in data.get("results", [])
-            if row.get("id") is not None
-        ]
         hits.sort(key=lambda hit: hit.popularity, reverse=True)
         return hits[:limit]
 
-    async def movie(self, tmdb_id: int) -> dict:
+    async def search(
+        self, query: str, media_type: str = MOVIE, limit: int = 30
+    ) -> list[SearchHit]:
+        query = query.strip()
+        if not query:
+            return []
+        path = "/search/multi" if media_type == "all" else f"/search/{media_type}"
+        data = await self._get(
+            path,
+            {"query": query, "include_adult": "false"},
+            cache_key=f"tmdb:search:{media_type}:{query.lower()}",
+        )
+        return self._hits(data, media_type, limit)
+
+    async def trending(
+        self, media_type: str = MOVIE, window: str = "week", limit: int = 30
+    ) -> list[SearchHit]:
+        if window not in WINDOWS:
+            window = "week"
+        data = await self._get(
+            f"/trending/{media_type}/{window}",
+            cache_key=f"tmdb:trending:{media_type}:{window}",
+        )
+        return self._hits(data, media_type, limit)
+
+    async def genres(self, media_type: str = MOVIE) -> list[Genre]:
+        if media_type not in (MOVIE, TV):
+            media_type = MOVIE
+        data = await self._get(
+            f"/genre/{media_type}/list", cache_key=f"tmdb:genres:{media_type}"
+        )
+        return [
+            Genre(tmdb_id=row["id"], name=row["name"], media_type=media_type)
+            for row in data.get("genres", [])
+            if row.get("id") is not None and row.get("name")
+        ]
+
+    async def discover(
+        self, media_type: str, genre_id: int, limit: int = 30
+    ) -> list[SearchHit]:
+        if media_type not in (MOVIE, TV):
+            media_type = MOVIE
+        data = await self._get(
+            f"/discover/{media_type}",
+            {"with_genres": str(genre_id), "sort_by": "popularity.desc"},
+            cache_key=f"tmdb:discover:{media_type}:{genre_id}",
+        )
+        return self._hits(data, media_type, limit)
+
+    # --------------------------------------------------------------- details
+
+    async def title(self, media_type: str, tmdb_id: int) -> dict:
+        if media_type not in (MOVIE, TV):
+            media_type = MOVIE
+        append = self.TV_APPEND if media_type == TV else self.MOVIE_APPEND
         return await self._get(
-            f"/movie/{tmdb_id}",
-            {"append_to_response": self.APPEND},
-            cache_key=f"tmdb:movie:{tmdb_id}",
+            f"/{media_type}/{tmdb_id}",
+            {"append_to_response": append},
+            cache_key=f"tmdb:{media_type}:{tmdb_id}",
         )
 
     async def poster(self, poster_path: str | None) -> bytes | None:
-        """Poster bytes, cached on disk. Never raises — posters are optional."""
+        """Poster bytes, cached on disk. Never raises - posters are optional."""
         if not poster_path:
             return None
 
@@ -124,9 +197,7 @@ class TMDBSource:
             return cached
 
         try:
-            response = await self._client.get(
-                f"{self.IMAGE_BASE}/{size}{poster_path}"
-            )
+            response = await self._client.get(f"{self.IMAGE_BASE}/{size}{poster_path}")
             response.raise_for_status()
         except httpx.HTTPError:
             return None
