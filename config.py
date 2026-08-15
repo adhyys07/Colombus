@@ -18,6 +18,12 @@ class ConfigError(RuntimeError):
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "colombus"
 DEFAULT_CACHE_TTL = 7 * 24 * 3600
 DEFAULT_POSTER_SIZE = "w342"
+DEFAULT_HTTP_RETRIES = 3
+# Wikimedia rejects generic User-Agents; theirs must carry a contact URL.
+# Override COLOMBUS_USER_AGENT to point at your own project or e-mail.
+DEFAULT_USER_AGENT = (
+    "Colombus/0.1 (https://github.com/colombus/colombus; terminal movie browser)"
+)
 
 _MISSING_TMDB = (
     "No TMDB credentials found.\n"
@@ -46,6 +52,8 @@ class Config:
     cache_dir: Path
     cache_ttl: int
     poster_size: str
+    http_retries: int = DEFAULT_HTTP_RETRIES
+    user_agent: str = DEFAULT_USER_AGENT
 
     @property
     def has_omdb(self) -> bool:
@@ -81,4 +89,6 @@ class Config:
             cache_dir=cache_dir,
             cache_ttl=_env_int("COLOMBUS_CACHE_TTL", DEFAULT_CACHE_TTL),
             poster_size=os.getenv("COLOMBUS_POSTER_SIZE") or DEFAULT_POSTER_SIZE,
+            http_retries=max(0, _env_int("COLOMBUS_HTTP_RETRIES", DEFAULT_HTTP_RETRIES)),
+            user_agent=os.getenv("COLOMBUS_USER_AGENT") or DEFAULT_USER_AGENT,
         )

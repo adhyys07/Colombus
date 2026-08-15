@@ -45,6 +45,7 @@ python main.py --env path/to/.env
 | `COLOMBUS_CACHE_DIR`    | `~/.cache/colombus`| cache location                   |
 | `COLOMBUS_CACHE_TTL`    | `604800` (7 days)  | cache lifetime in seconds; `0` never expires |
 | `COLOMBUS_POSTER_SIZE`  | `w342`             | TMDB poster width                |
+| `COLOMBUS_HTTP_RETRIES` | `3`                | connection retries; raise it if you see `Could not reach TMDB` |
 
 ## Layout
 

@@ -62,7 +62,13 @@ class TMDBSource:
                 raise TMDBError("TMDB rate limit reached - try again shortly.") from exc
             raise TMDBError(f"TMDB request failed (HTTP {code}).") from exc
         except httpx.HTTPError as exc:
-            raise TMDBError(f"Could not reach TMDB: {exc}") from exc
+            detail = str(exc) or type(exc).__name__
+            raise TMDBError(
+                f"Could not reach TMDB: {detail}\n"
+                "The connection failed after retrying. If this keeps happening, "
+                "raise COLOMBUS_HTTP_RETRIES in your .env, or try another "
+                "network - some ISPs interfere with api.themoviedb.org."
+            ) from exc
 
         try:
             data = response.json()

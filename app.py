@@ -33,6 +33,7 @@ class ColombusApp(App[None]):
         self.config = config
         self._service = MovieService(config)
         self._initial_query = initial_query.strip()
+        self._warned_omdb = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -90,6 +91,7 @@ class ColombusApp(App[None]):
             return
 
         detail.show_movie(movie)
+        self._warn_once_about_omdb()
         data = await self._service.poster(movie.poster_path or hit.poster_path)
         await poster.show(data, movie.label)
 
@@ -106,6 +108,19 @@ class ColombusApp(App[None]):
             self.load_details(hit)
 
     # ------------------------------------------------------------------ actions
+
+    def _warn_once_about_omdb(self) -> None:
+        """A rejected OMDb key silently costs ratings; say so, once."""
+        if self._service.omdb.auth_failed and not self._warned_omdb:
+            self._warned_omdb = True
+            self.notify(
+                "OMDb rejected your API key, so extra ratings are unavailable. "
+                "Check OMDB_API_KEY in your .env (new keys need the activation "
+                "link e-mailed to you).",
+                title="OMDb unavailable",
+                severity="warning",
+                timeout=10,
+            )
 
     def action_focus_search(self) -> None:
         self.query_one("#search", Input).focus()

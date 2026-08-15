@@ -11,7 +11,6 @@ from config import Config
 from models import Movie, Rating, Review, SearchHit
 from sources import OMDBSource, TMDBSource, WikipediaSource
 
-USER_AGENT = "Colombus/0.1 (terminal movie browser)"
 WRITER_JOBS = {"Writer", "Screenplay", "Story", "Screenstory", "Author"}
 CAST_LIMIT = 12
 
@@ -25,10 +24,14 @@ class MovieService:
     ) -> None:
         self.config = config
         self.cache = cache or Cache(config.cache_dir, config.cache_ttl)
+        # Establishing the connection is the fragile step on some networks;
+        # once a connection is up it is reused for the rest of the session.
+        transport = httpx.AsyncHTTPTransport(retries=config.http_retries)
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(15.0),
-            headers={"User-Agent": USER_AGENT},
+            headers={"User-Agent": config.user_agent},
             follow_redirects=True,
+            transport=transport,
         )
         self.tmdb = TMDBSource(config, self.cache, self._client)
         self.omdb = OMDBSource(config, self.cache, self._client)
