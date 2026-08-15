@@ -21,6 +21,12 @@ hiddenimports += [
     "widgets.detail",
     "widgets.poster",
     "widgets.results",
+    "widgets.reviews",
+    "widgets.cast",
+    "widgets.episodes",
+    "widgets.artposter",
+    "widget",
+    "i18n",
 ]
 
 a = Analysis(
@@ -31,7 +37,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["tkinter", "matplotlib", "numpy", "pytest"],
+    excludes=["matplotlib", "numpy", "pytest"],  # tkinter is needed by widget.py
     noarchive=False,
 )
 pyz = PYZ(a.pure)

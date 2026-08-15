@@ -81,6 +81,23 @@ the current working directory. Run it from a terminal (it is a console app):
 dist\colombus.exe "blade runner 2049"
 ```
 
+## Desktop widget
+
+```bash
+python main.py --widget            # trending films
+python main.py --widget-series --widget
+```
+
+A borderless, always-on-top panel styled like a terminal, showing the top ten
+trending titles with score bars. Drag it by the header; it remembers where you
+put it. `tab` cycles through trending-today, trending-this-week and the genre
+lists, `r` refreshes, `o` opens the top title on TMDB, `q` closes it. It
+refreshes itself every 15 minutes.
+
+This is a desktop widget, not a panel in the Windows 11 Widgets Board - that
+board only accepts MSIX-packaged apps implementing the `IWidgetProvider` COM
+interface through the Windows App SDK, which a Python project cannot provide.
+
 ## Configuration
 
 | Variable                | Default            | Purpose                          |
@@ -102,6 +119,7 @@ dist\colombus.exe "blade runner 2049"
 | Module        | Role                                                    |
 | ------------- | ------------------------------------------------------- |
 | `main.py`     | CLI entry point and argument parsing                    |
+| `widget.py`   | Always-on-top desktop widget (tkinter)                  |
 | `app.py`      | Textual app: layout, key bindings, background workers   |
 | `service.py`  | Fans one lookup across all sources into a single `Movie` |
 | `sources/`    | TMDB (required), OMDb and Wikipedia (both optional)     |
