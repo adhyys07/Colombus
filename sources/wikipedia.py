@@ -1,75 +1,84 @@
+"""Wikipedia: a plot/background extract for the detail pane.
+
+Optional enrichment — every failure returns empty strings rather than raising.
+"""
+
 from __future__ import annotations
+
 from urllib.parse import quote
+
 import httpx
+
 from cache import Cache
 
-API = "https://en.wikipedia.org/w/api.php"
-REST = "https://en.wikipedia.org/api/rest_v1/page/summary"
 
 class WikipediaSource:
-    def __init__(self, client: httpx.AsyncClient, cache: Cache) -> None:
-        self._client = client
-        self._cache = cache
+    API = "https://en.wikipedia.org/w/api.php"
+    SUMMARY = "https://en.wikipedia.org/api/rest_v1/page/summary/"
 
-    async def _search_title(self, title: str, year: str) -> str | None:
-        query = f"{title} ({year}) film".strip()
-        key = f"wiki:search:{query.lower()}"
-        if (hit := self._cache.get_json(key)) is not None:
-            return hit or None
+    def __init__(self, cache: Cache, client: httpx.AsyncClient) -> None:
+        self._cache = cache
+        self._client = client
+
+    async def _find_page(self, title: str, year: str) -> str | None:
+        term = f"{title} {year} film".strip()
         try:
-            resp = await self._client.get(
-                API,
+            response = await self._client.get(
+                self.API,
                 params={
                     "action": "query",
                     "list": "search",
-                    "srsearch": query,
-                    "srlimit": 5,
+                    "srsearch": term,
+                    "srlimit": "5",
                     "format": "json",
                 },
-                headers={"User-Agent": "Colombus/1.0"},
             )
-            resp.raise_for_status()
-            results= resp.json().get("query", {}).get("search", [])
-        except (httpx.HTTPError, ValueError):
+            response.raise_for_status()
+            results = response.json()["query"]["search"]
+        except (httpx.HTTPError, ValueError, KeyError):
             return None
 
         if not results:
-            self._cache.set_json(key, "")
             return None
 
-        best = next(
-            (r["title"] for r in results if "film" in r["title"].lower()),
-            results[0]["title"],
-        )
-        self._cache.set_json(key, best)
-        return best
+        # Prefer a page disambiguated as a film over a same-named novel/album.
+        for row in results:
+            name = row.get("title", "")
+            if "film" in name.lower():
+                return name
+        return results[0].get("title")
 
-    async def summary(self, title: str, year: str = "") -> dict | None:
-        page = await self._search_title(title, year)
+    async def summary(self, title: str, year: str = "") -> tuple[str, str]:
+        """Returns (extract, url), or ("", "") when nothing usable is found."""
+        if not title:
+            return "", ""
+
+        cache_key = f"wiki:{title.lower()}:{year}"
+        if (cached := self._cache.get_json(cache_key)) is not None:
+            return cached.get("extract", ""), cached.get("url", "")
+
+        page = await self._find_page(title, year)
         if not page:
-            return None
-        key = f"wiki:summary:{page}"
-        if (hit := self._cache.get_json(key)) is not None:
-            return hit or None
+            return "", ""
 
         try:
-            resp = await self._client.get(
-                REST + quote(page.replace(" ", "_"), safe=""),
-                headers = {"User-Agent": "Colombus/1.0"},
+            response = await self._client.get(
+                f"{self.SUMMARY}{quote(page.replace(' ', '_'), safe='')}"
             )
-            resp.raise_for_status()
-            data = resp.json()
+            response.raise_for_status()
+            data = response.json()
         except (httpx.HTTPError, ValueError):
-            return None
-        if data.get("type") == "disambiguation":
-            return None
+            return "", ""
 
-        out = {
-            "extract": data.get("extract", ""),
-            "url": data.get("content_urls", {})
-            .get("desktop", {})
-            .get("page", f"https://en.wikipedia.org/wiki/{quote(page)}"),
-            "title": data.get("title", page),
-        }
-        self,_cache.set_json(key, out)
-        return out
+        if data.get("type") == "disambiguation":
+            return "", ""
+
+        extract = data.get("extract") or ""
+        url = (
+            data.get("content_urls", {}).get("desktop", {}).get("page")
+            or f"https://en.wikipedia.org/wiki/{quote(page.replace(' ', '_'), safe='')}"
+        )
+
+        if extract:
+            self._cache.set_json(cache_key, {"extract": extract, "url": url})
+        return extract, url

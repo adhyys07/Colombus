@@ -1,44 +1,41 @@
+"""Left-hand list of search results."""
+
 from __future__ import annotations
+
 from rich.text import Text
-from textual.widgets import Label, ListView, ListItem
+from textual.widgets import Label, ListItem, ListView
+
 from models import SearchHit
 
-class ResultsItem(ListItem):
-    def __init__(self,hit: SearchHit) -> None:
-        super().__init__()
+
+class ResultItem(ListItem):
+    """A ListItem that remembers which SearchHit it stands for."""
+
+    def __init__(self, hit: SearchHit) -> None:
+        super().__init__(Label(self._label_text(hit)))
         self.hit = hit
 
-    def compose(self):
-        text = Text()
-        text.append(self.hit.title, style="bold")
-        if self.hit.year:
-            text.append(f" ({self.hit.year})", style="dim")
-        if self.hit.vote_average:
-            text.append(f"  ★{self.hit.vote_average:.1f}", style="yellow")
-        yield Label(text)
+    @staticmethod
+    def _label_text(hit: SearchHit) -> Text:
+        line = Text(hit.title, style="bold")
+        if hit.year:
+            line.append(f"  {hit.year}", style="dim")
+        if hit.vote_average:
+            line.append(f"  ★{hit.vote_average:.1f}", style="yellow")
+        return line
 
-class ResultList(ListView):
-    DEFAULT_CSS = """
-    ResultList {
-        height: 1fr;
-        border: none;
-        background: transparent;
-    }
-    ResultList > ResultItem {
-        padding: 0 1;
-    }
-    ResultList > ResultItem.--highlight {
-        background: $accent 30;
-    }
-    """
 
-    async def set_hits(self, hits: list[SearchHit]) -> None:
+class ResultsList(ListView):
+    BORDER_TITLE = "Results"
+
+    async def show(self, hits: list[SearchHit]) -> None:
         await self.clear()
         for hit in hits:
-            await self.append(ResultsItem(hit))
+            await self.append(ResultItem(hit))
         if hits:
             self.index = 0
+
     @property
-    def current_hit(self) -> SearchHit | None:
+    def selected_hit(self) -> SearchHit | None:
         item = self.highlighted_child
-        return item.hit if isinstance(item, ResultItem) else None
+        return getattr(item, "hit", None)

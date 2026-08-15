@@ -1,32 +1,41 @@
 from __future__ import annotations
+
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
 try:
     from dotenv import load_dotenv
-except ImportError:
-    def load_dotenv(*args, **_kwargs) -> bool:
+except ImportError:  # python-dotenv is optional
+    def load_dotenv(*_args, **_kwargs) -> bool:
         return False
 
 
-DEFAULT_CACHE_DIR = "~/.cache/colombus"
+class ConfigError(RuntimeError):
+    """Raised when required credentials are missing."""
+
+
+DEFAULT_CACHE_DIR = Path.home() / ".cache" / "colombus"
 DEFAULT_CACHE_TTL = 7 * 24 * 3600
 DEFAULT_POSTER_SIZE = "w342"
 
-
-class ConfigError(RuntimeError):
-    """Raised when configuration is missing or malformed."""
+_MISSING_TMDB = (
+    "No TMDB credentials found.\n"
+    "Set TMDB_API_KEY (v3) or TMDB_ACCESS_TOKEN (v4) in your "
+    "environment or a .env file.\n"
+    "Get one free at https://www.themoviedb.org/settings/api"
+)
 
 
 def _env_int(name: str, default: int) -> int:
+    """Read an int from the environment, falling back on junk values."""
     raw = os.getenv(name)
     if not raw:
         return default
     try:
         return int(raw)
     except ValueError:
-        raise ConfigError(f"{name} must be an integer, got {raw!r}") from None
+        return default
 
 
 @dataclass(frozen=True)
@@ -42,6 +51,13 @@ class Config:
     def has_omdb(self) -> bool:
         return bool(self.omdb_api_key)
 
+    @property
+    def tmdb_headers(self) -> dict[str, str]:
+        """Bearer auth for the v4 token; empty when only a v3 key is set."""
+        if self.tmdb_access_token:
+            return {"Authorization": f"Bearer {self.tmdb_access_token}"}
+        return {}
+
     @classmethod
     def load(cls, env_file: str | os.PathLike | None = None) -> Config:
         if env_file:
@@ -52,12 +68,7 @@ class Config:
         tmdb_key = os.getenv("TMDB_API_KEY") or None
         tmdb_token = os.getenv("TMDB_ACCESS_TOKEN") or None
         if not (tmdb_key or tmdb_token):
-            raise ConfigError(
-                "No TMDB credentials found.\n"
-                "Set TMDB_API_KEY (v3) or TMDB_ACCESS_TOKEN (v4) in your "
-                "environment or a .env file.\n"
-                "Get one free at https://www.themoviedb.org/settings/api"
-            )
+            raise ConfigError(_MISSING_TMDB)
 
         cache_dir = Path(
             os.getenv("COLOMBUS_CACHE_DIR") or DEFAULT_CACHE_DIR

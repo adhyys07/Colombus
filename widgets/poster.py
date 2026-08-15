@@ -1,72 +1,44 @@
+"""Poster pane.
+
+Renders real pixels when textual-image and the terminal both cooperate
+(Kitty graphics / Sixel), and degrades to a text placeholder otherwise.
+"""
+
 from __future__ import annotations
-from rich.text import Text
+
+import io
+
 from textual.app import ComposeResult
 from textual.containers import Container
 from textual.widgets import Static
-import render
 
-class Poster(Container):
-    DEFAULT_CSS = """
-    Poster {
-        width: auto;
-        height: 1fr;
-        padding: 0 1;
-    }
-    Poster > Static {
-        width:auto;
-        height: auto;
-    }
-    """
+from render import message_renderable
 
-    def __init__(self, * , cols:int = 28, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.cols = cols
-        self.title = ""
-        self._image_widget = None
-        self._fallback: Static | None = None
+try:  # optional dependency
+    from textual_image.widget import Image as _Image
+except ImportError:  # pragma: no cover - depends on the install
+    _Image = None
+
+
+class PosterPane(Container):
+    BORDER_TITLE = "Poster"
 
     def compose(self) -> ComposeResult:
-        if render.BACKEND == "textual-image":
-            from textual_image.widget import Image as TextualImage
+        yield Static(message_renderable("No poster"), id="poster-body")
 
-            self._image_widget = TextualImage(id="poster-image")
-        else:
-            self._fallback = Static("", id="poster-fallback")
-            yield self._fallback
+    async def show(self, data: bytes | None, caption: str = "") -> None:
+        await self.remove_children()
 
-    def show(self, data: bytes | None, title: str = "") -> None:
-        self.title = title
-        rows = render.rows_for_width(self.cols)
-
-        if data and self._image_widget is not None:
+        if data and _Image is not None:
             try:
-                self._image_widget.image = render.open_image(data)
-                self._image_widget.styles.width = self.cols
-                self._image_widget.styles.height = rows
+                await self.mount(_Image(io.BytesIO(data), id="poster-body"))
                 return
             except Exception:
-                self._swap_to_fallback()
-        target = self._fallback
-        if target is None:
-            return
-        if data and render.BACKEND != "none":
-            ansi = render.chafa_ansi(data, self.cols, rows)
-            if ansi:
-                target.update(Text.from_ansi(ansi))
-                return
+                # Terminal or backend can't render pixels; fall through to text.
+                await self.remove_children()
 
-        target.update(Text(render.placeholder(title, self.cols, rows), style="dim"))
+        placeholder = caption or ("Poster unavailable" if data is None else "No poster")
+        await self.mount(Static(message_renderable(placeholder), id="poster-body"))
 
-    def clear(self) -> None:
-        rows = render.rows_for_width(self.cols)
-        if self._fallback is not None:
-            self._fallback.update(Text(render.placeholder("", self.cols, rows), "dim"))
-
-    def _swap_to_fallback(self) -> None:
-        if self._fallback is not None:
-            return
-        if self._image_widget is not None:
-            self._image_widget.remove()
-            self._image_widget = None
-        self._fallback = Static("", id="poster-fallback")
-        self.mount(self._fallback)
+    async def clear(self) -> None:
+        await self.show(None, "No poster")

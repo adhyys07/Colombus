@@ -1,10 +1,11 @@
 from __future__ import annotations
+
 import hashlib
 import json
-import os
 import sqlite3
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -17,11 +18,10 @@ CREATE TABLE IF NOT EXISTS kv (
 CREATE INDEX IF NOT EXISTS kv_ts ON kv (ts);
 """
 
-_REPLACE_ATTEMPTS = 5
-_REPLACE_BACKOFF = 0.05
-
 
 class Cache:
+    """SQLite key/value store for JSON, plus an on-disk blob store for posters."""
+
     def __init__(self, directory: Path, ttl: int = 7 * 24 * 3600) -> None:
         self.dir = Path(directory)
         self.blobs = self.dir / "posters"
@@ -31,9 +31,14 @@ class Cache:
         self._db = sqlite3.connect(
             self.dir / "cache.db", check_same_thread=False, isolation_level=None
         )
+        # Readers and the writer are serialised by _lock, but WAL plus a busy
+        # timeout keeps a second Colombus process from erroring out.
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA busy_timeout=5000")
         self._db.executescript(_SCHEMA)
+
+    def _expired(self, ts: float) -> bool:
+        return bool(self.ttl) and (time.time() - ts) > self.ttl
 
     def get_json(self, key: str) -> Any | None:
         with self._lock:
@@ -43,7 +48,7 @@ class Cache:
         if row is None:
             return None
         value, ts = row
-        if self.ttl and (time.time() - ts) > self.ttl:
+        if self._expired(ts):
             self.delete(key)
             return None
         try:
@@ -70,39 +75,25 @@ class Cache:
     def get_blob(self, key: str) -> bytes | None:
         path = self._blob_path(key)
         try:
-            if self.ttl and (time.time() - path.stat().st_mtime) > self.ttl:
+            if self._expired(path.stat().st_mtime):
                 path.unlink(missing_ok=True)
                 return None
             return path.read_bytes()
+        except FileNotFoundError:
+            return None
         except OSError:
-            # Absent, locked mid-replace, or unreadable: all are cache misses.
             return None
 
     def set_blob(self, key: str, data: bytes) -> None:
-        """Best-effort write. A cache failure must never break the caller."""
-        path = self._blob_path(key)
-        # Unique temp name so concurrent writers for the same key cannot
-        # clobber each other's partial file before the atomic replace.
-        tmp = path.with_name(f"{path.stem}.{os.getpid()}.{threading.get_ident()}.tmp")
+        target = self._blob_path(key)
+        # Unique temp name: two threads may fetch the same poster at once.
+        tmp = target.with_name(f"{target.stem}.{uuid.uuid4().hex}.tmp")
         try:
+            self.blobs.mkdir(parents=True, exist_ok=True)
             tmp.write_bytes(data)
-            # Windows refuses to replace a file another thread holds open, so
-            # retry briefly rather than propagating a transient PermissionError.
-            for attempt in range(_REPLACE_ATTEMPTS):
-                try:
-                    tmp.replace(path)
-                    return
-                except PermissionError:
-                    if attempt == _REPLACE_ATTEMPTS - 1:
-                        return
-                    time.sleep(_REPLACE_BACKOFF)
+            tmp.replace(target)
         except OSError:
-            return
-        finally:
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
+            tmp.unlink(missing_ok=True)
 
     def purge(self) -> None:
         with self._lock:
@@ -115,7 +106,7 @@ class Cache:
         with self._lock:
             self._db.close()
 
-    def __enter__(self) -> "Cache":
+    def __enter__(self) -> Cache:
         return self
 
     def __exit__(self, *_exc: object) -> None:

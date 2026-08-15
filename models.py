@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field
+
 
 @dataclass
 class SearchHit:
@@ -16,6 +18,7 @@ class SearchHit:
     def label(self) -> str:
         return f"{self.title} ({self.year})" if self.year else self.title
 
+
 @dataclass
 class Rating:
     """A single critic/aggregator score, plus a 0-100 normalisation for bars."""
@@ -28,9 +31,11 @@ class Rating:
     def parse(cls, source: str, value: str) -> Rating:
         return cls(source=source, value=value, score=_normalise(value))
 
+
 def _clamp(score: float) -> float:
     """Keep scores inside the 0-100 range the bars are drawn against."""
     return min(100.0, max(0.0, score))
+
 
 def _normalise(value: str) -> float | None:
     value = value.strip()
@@ -40,8 +45,12 @@ def _normalise(value: str) -> float | None:
         num, den = float(m.group(1)), float(m.group(2))
         return _clamp(round(num / den * 100, 1)) if den else None
     if m := re.fullmatch(r"(\d+(?:\.\d+)?)", value):
-        return _clamp(float(m.group(1)))
+        # A bare number is either a 0-10 score (TMDB) or a 0-100 one
+        # (Metacritic). Assume 0-10 at or below 10; "10" reads as 100.
+        score = float(m.group(1))
+        return _clamp(score * 10 if score <= 10 else score)
     return None
+
 
 @dataclass
 class Review:
@@ -52,10 +61,14 @@ class Review:
     source: str = "TMDB"
 
     def excerpt(self, limit: int = 600) -> str:
+        """Whitespace-collapsed content, never longer than `limit` characters."""
         text = " ".join(self.content.split())
         if len(text) <= limit:
             return text
-        return text[: max(0, limit - 3)].rstrip() + "..."
+        if limit <= 3:
+            return text[: max(limit, 0)]
+        return text[: limit - 3].rstrip() + "..."
+
 
 @dataclass
 class Movie:
@@ -70,6 +83,7 @@ class Movie:
     writers: list[str] = field(default_factory=list)
     cast: list[str] = field(default_factory=list)
     overview: str = ""
+    poster_path: str | None = None
     poster_url: str | None = None
     ratings: list[Rating] = field(default_factory=list)
     reviews: list[Review] = field(default_factory=list)
@@ -84,3 +98,7 @@ class Movie:
     @property
     def imdb_url(self) -> str | None:
         return f"https://www.imdb.com/title/{self.imdb_id}/" if self.imdb_id else None
+
+    @property
+    def label(self) -> str:
+        return f"{self.title} ({self.year})" if self.year else self.title

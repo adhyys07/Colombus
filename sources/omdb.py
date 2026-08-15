@@ -1,76 +1,64 @@
+"""OMDb: supplies the IMDb / Rotten Tomatoes / Metacritic score line.
+
+Entirely optional. Every failure degrades to "no extra ratings" rather than
+raising, so a missing or throttled OMDb key never blocks a detail view.
+"""
+
 from __future__ import annotations
+
 import httpx
+
 from cache import Cache
+from config import Config
 from models import Rating
 
-BASE = "http://www.omdbapi.com"
 
-_SOURCE_LABELS = {
-    "Internet Movie Database": "IMDb",
-    "Rotten Tomatoes": "Rotten Tomatoes",
-    "Metacritic": "Metacritic",
-}
+class OMDBSource:
+    BASE = "https://www.omdbapi.com/"
 
-class OMDBSource:   
-    def __init__(
-            self, client: httpx.AsyncClient, cache: Cache, api_key: str | None
-    ) -> None:
-        self._client = client
+    def __init__(self, config: Config, cache: Cache, client: httpx.AsyncClient) -> None:
+        self._config = config
         self._cache = cache
-        self._api_key = api_key
+        self._client = client
 
-    @property
-    def enabled(self) -> bool:
-        return bool(self._api_key)
-
-    async def by_imdb_id(self, imdb_id: str) -> dict | None:
-        if not (self.enabled and imdb_id):
+    async def fetch(self, imdb_id: str | None) -> dict | None:
+        if not (self._config.has_omdb and imdb_id):
             return None
 
-        key = f"omdb:{imdb_id}"
-        if (hit := self._cache.get_json(key)) is not None:
-            return hit
+        cache_key = f"omdb:{imdb_id}"
+        if (cached := self._cache.get_json(cache_key)) is not None:
+            return cached
+
         try:
-            resp = await self._client.get(
-                  BASE, params={"apikey": self._api_key, "i": imdb_id, "plot": "short"}
+            response = await self._client.get(
+                self.BASE,
+                params={"i": imdb_id, "apikey": self._config.omdb_api_key or ""},
             )
-            resp.raise_for_status()
-            data = resp.json()
+            response.raise_for_status()
+            data = response.json()
         except (httpx.HTTPError, ValueError):
             return None
 
-    async def ratings(self, imdb_id: str) -> list[Rating]:
-        data = await self.by_imdb_id(imdb_id)
+        # OMDb signals errors in-band with HTTP 200.
+        if str(data.get("Response", "")).lower() != "true":
+            return None
+
+        self._cache.set_json(cache_key, data)
+        return data
+
+    async def ratings(self, imdb_id: str | None) -> tuple[list[Rating], str]:
+        """Returns (ratings, certificate). Both empty when OMDb is unavailable."""
+        data = await self.fetch(imdb_id)
         if not data:
-            return []
+            return [], ""
 
-        out: list[Rating] = []
-        for entry in data.get("Ratings", []):
-            source = entry.get("Source", "")
-            value = entry.get("Value", "")
-            if not (source and value):
-                continue
-            out.append(Rating.parse(_SOURCE_LABELS.get(source, source), value))
+        ratings = [
+            Rating.parse(entry["Source"], entry["Value"])
+            for entry in data.get("Ratings", [])
+            if entry.get("Source") and entry.get("Value")
+        ]
 
-        have = {r.source for r in out}
-        meta = data.get("Metascore")
-        if "Metacritic" not in have and meta and meta != "N/A":
-            out.append(Rating.parse("Metacritic", f"{meta}/100"))
-
-        return out
-
-    async def extras(self, imdb_id: str) -> dict[str, str]:
-        data = await self.by_imdb_id(imdb_id)
-        if not data:
-            return {}
-        return {
-            k: v
-            for k,v in {
-                "plot": data.get("Plot", ""),
-                "poster_url": data.get("Poster"),
-                "languages": [l.strip() for l in data.get("Language", "").split(",")],
-                "countries": [c.strip() for c in data.get("Country", "").split(",")],
-                "certificate": data.get("Rated", ""),
-            }.items()
-            if v and v != "N/A"
-        }
+        certificate = data.get("Rated") or ""
+        if certificate in {"N/A", "Not Rated", "Unrated"}:
+            certificate = ""
+        return ratings, certificate

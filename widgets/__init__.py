@@ -1,5 +1,7 @@
-from .detail import DetailPane
-from .poster import Poster
-from .results import ResultItem, ResultsList
+"""Textual widgets composing the Colombus UI."""
 
-__all__ = ["Poster", "DetailPane", "ResultList", "ResultsList"]
+from widgets.detail import DetailPane
+from widgets.poster import PosterPane
+from widgets.results import ResultItem, ResultsList
+
+__all__ = ["DetailPane", "PosterPane", "ResultItem", "ResultsList"]

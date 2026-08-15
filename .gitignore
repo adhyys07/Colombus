@@ -1,5 +1,4 @@
 .env
-
 __pycache__/
 *.py[cod]
 .venv/
@@ -7,3 +6,4 @@ venv/
 build/
 dist/
 *.egg-info/
+.cache/

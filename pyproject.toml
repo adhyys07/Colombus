@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "colombus"
 version = "0.1.0"
-description = "Terminal UI for browsing movie details, ratings and reviews."
+description = "Browse films from your terminal."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -17,9 +17,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Kitty graphics protocol / Sixel poster rendering.
 posters = ["textual-image>=0.6"]
+
+[project.scripts]
+colombus = "main:main"
 
 [tool.setuptools]
 py-modules = ["app", "cache", "config", "main", "models", "render", "service"]
-packages = ["sources", "widgets"]
+
+[tool.setuptools.packages.find]
+include = ["sources*", "widgets*"]

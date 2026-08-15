@@ -1,101 +1,129 @@
+"""TMDB: the primary source for search results, metadata and posters."""
+
 from __future__ import annotations
+
 import httpx
+
 from cache import Cache
+from config import Config
 from models import SearchHit
 
-BASE = "https://api.themoviedb.org/3"
-IMAGE_BASE = "https://image.tmdb.org/t/p"
+
+class TMDBError(RuntimeError):
+    """A TMDB request failed in a way the user needs to know about."""
+
 
 class TMDBSource:
-    def __init__(
-            self,
-            client: httpx.AsyncClient,
-            cache: Cache,
-            *,
-            api_key: str | None = None,
-            access_token: str | None = None,
-            poster_size: str = "w342",
-    ) -> None:
-        if not(api_key or access_token):
-            raise ValueError("TMDB API key or access token is required")
-        self._client = client
+    BASE = "https://api.themoviedb.org/3"
+    IMAGE_BASE = "https://image.tmdb.org/t/p"
+    APPEND = "credits,reviews,release_dates,external_ids"
+
+    def __init__(self, config: Config, cache: Cache, client: httpx.AsyncClient) -> None:
+        self._config = config
         self._cache = cache
-        self._api_key = api_key
-        self._access_token = access_token
-        self._poster_size = poster_size
+        self._client = client
 
-    @property
-    def _headers(self) -> dict[str, str]:
-        if self._access_token:
-            return {"Authorization": f"Bearer {self._access_token}"}
-        return {}
+    def _auth(self) -> tuple[dict[str, str], dict[str, str]]:
+        """Bearer header for a v4 token, else an api_key query param."""
+        headers = self._config.tmdb_headers
+        if headers:
+            return headers, {}
+        return {}, {"api_key": self._config.tmdb_api_key or ""}
 
-    def _auth_params(self, params:dict) -> dict:
-        if not self._access_token and self._api_key:
-            params = {**params, "api_key": self._api_key}
-        return params
+    async def _get(
+        self,
+        path: str,
+        params: dict[str, str] | None = None,
+        cache_key: str | None = None,
+    ) -> dict:
+        if cache_key:
+            cached = self._cache.get_json(cache_key)
+            if cached is not None:
+                return cached
 
-    async def _get(self, path:str, cache_key:str, **params) -> dict:
-        if (hit := self._cache.get_json(cache_key)) is not None:
-            return hit
-        resp = await self._client.get(
-            f"{BASE}/{path}",
-            headers=self._headers,
-            params=self._auth_params(params),
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        self._cache.set_json(cache_key, data)
+        headers, auth_params = self._auth()
+        try:
+            response = await self._client.get(
+                f"{self.BASE}{path}",
+                params={**auth_params, **(params or {})},
+                headers=headers,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code
+            if code == 401:
+                raise TMDBError(
+                    "TMDB rejected your credentials. Check TMDB_API_KEY / "
+                    "TMDB_ACCESS_TOKEN in your .env file."
+                ) from exc
+            if code == 404:
+                raise TMDBError("TMDB has no record of that title.") from exc
+            if code == 429:
+                raise TMDBError("TMDB rate limit reached - try again shortly.") from exc
+            raise TMDBError(f"TMDB request failed (HTTP {code}).") from exc
+        except httpx.HTTPError as exc:
+            raise TMDBError(f"Could not reach TMDB: {exc}") from exc
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise TMDBError("TMDB returned a malformed response.") from exc
+
+        if cache_key:
+            self._cache.set_json(cache_key, data)
         return data
 
-    async def search(self, query:str, limit: int = 25) -> list[SearchHit]:
+    async def search(self, query: str, limit: int = 30) -> list[SearchHit]:
         query = query.strip()
         if not query:
             return []
+
         data = await self._get(
             "/search/movie",
-            f"tmdb:search:{query.lower()}",
-            query=query,
-            include_adult=False,
-            language="en-US",
-            page=1,
+            {"query": query, "include_adult": "false"},
+            cache_key=f"tmdb:search:{query.lower()}",
         )
+
         hits = [
             SearchHit(
-                tmdb_id=r["id"],
-                title=r.get("title") or r.get("original_title", "Untitled"),
-                year=(r.get("release_date") or "")[:4],
-                overview=r.get("overview", ""),
-                poster_path=r.get("poster_path"),
-                popularity=r.get("popularity", 0.0),
-                vote_average=r.get("vote_average", 0.0),
+                tmdb_id=row["id"],
+                title=row.get("title") or row.get("original_title") or "Untitled",
+                year=(row.get("release_date") or "")[:4],
+                overview=row.get("overview") or "",
+                poster_path=row.get("poster_path"),
+                popularity=float(row.get("popularity") or 0.0),
+                vote_average=float(row.get("vote_average") or 0.0),
             )
-            for r in data.get("results", [])
+            for row in data.get("results", [])
+            if row.get("id") is not None
         ]
-        lowered = query.lower()
-        hits.sort(key = lambda h: (h.title.lower() != lowered, -h.popularity))
+        hits.sort(key=lambda hit: hit.popularity, reverse=True)
         return hits[:limit]
 
-    async def details(self, tmdb_id:int) -> dict:
+    async def movie(self, tmdb_id: int) -> dict:
         return await self._get(
             f"/movie/{tmdb_id}",
-            f"tmdb:details:{tmdb_id}",
-            language="en-US",
-            append_to_response="credits,reviews,external_ids,release_dates",
+            {"append_to_response": self.APPEND},
+            cache_key=f"tmdb:movie:{tmdb_id}",
         )
-    
-    def poster_url(self, poster_path:str | None, size:str | None = None) -> str | None:
+
+    async def poster(self, poster_path: str | None) -> bytes | None:
+        """Poster bytes, cached on disk. Never raises — posters are optional."""
         if not poster_path:
             return None
-        return f"{IMAGE_BASE}/{size or self.poster_size}{poster_path}"
 
-    async def poster_bytes(self, url: str) -> bytes | None:
-        if (blob := self._cache.get_blob(url)) is not None:
-            return blob
+        size = self._config.poster_size
+        key = f"poster:{size}:{poster_path}"
+        if cached := self._cache.get_blob(key):
+            return cached
+
         try:
-            resp = await self._client.get(url)
-            resp.raise_for_status()
+            response = await self._client.get(
+                f"{self.IMAGE_BASE}/{size}{poster_path}"
+            )
+            response.raise_for_status()
         except httpx.HTTPError:
             return None
-        self._cache.set_blob(url, resp.content)
-        return resp.content
+
+        self._cache.set_blob(key, response.content)
+        return response.content
