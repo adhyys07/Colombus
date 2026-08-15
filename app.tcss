@@ -1,0 +1,57 @@
+Screen {
+    background: $surface;
+}
+
+#body {
+    height: 1fr
+}
+
+#sidebar {
+    width: 34;
+    min-width: 26;
+    background: $surface;
+    border-right: solid $panel-lighten-2;
+    padding: 0 1;
+}
+
+
+#search {
+    margin: 1 0;
+    border: tall $panel-lighten-2;
+    background: $panel;
+}
+
+#search:focus {
+    border: tall $accent;
+}
+
+#status {
+    height: 1;
+    color: $text-muted;
+    text-style: italic;
+    padding: 0 1;
+}
+
+#status.error {
+    color: $error;
+    text-style: bold;
+}
+
+#detail-wrap {
+    width: 1fr;
+    padding: 1 0 0 1;
+}
+
+#poster {
+    width: 30;
+    min-width: 0;
+}
+
+#detail {
+    width: 1fr;
+}
+
+/* Narrow terminals: drop the poster rather than squash both panes. */
+#detail-wrap.compact #poster {
+    display: none;
+}
