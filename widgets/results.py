@@ -27,6 +27,14 @@ class ResultItem(ListItem):
         return line
 
 
+class QueryItem(ListItem):
+    """A remembered search; selecting it re-runs the query."""
+
+    def __init__(self, query: str) -> None:
+        super().__init__(Label(Text(query, style="italic")))
+        self.query = query
+
+
 class ResultsList(ListView):
     BORDER_TITLE = "Results"
 
@@ -35,6 +43,13 @@ class ResultsList(ListView):
         for hit in hits:
             await self.append(ResultItem(hit))
         if hits:
+            self.index = 0
+
+    async def show_queries(self, queries: list[str]) -> None:
+        await self.clear()
+        for query in queries:
+            await self.append(QueryItem(query))
+        if queries:
             self.index = 0
 
     @property

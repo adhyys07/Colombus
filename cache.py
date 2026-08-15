@@ -8,6 +8,8 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from models import SearchHit
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS kv (
@@ -16,6 +18,23 @@ CREATE TABLE IF NOT EXISTS kv (
     ts REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS kv_ts ON kv (ts);
+
+CREATE TABLE IF NOT EXISTS watchlist (
+    tmdb_id INTEGER NOT NULL,
+    media_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    year TEXT NOT NULL DEFAULT '',
+    poster_path TEXT,
+    added REAL NOT NULL,
+    PRIMARY KEY (tmdb_id, media_type)
+);
+CREATE TABLE IF NOT EXISTS history (
+    query TEXT NOT NULL,
+    media_type TEXT NOT NULL DEFAULT 'movie',
+    last_used REAL NOT NULL,
+    uses INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (query, media_type)
+);
 """
 
 
@@ -64,6 +83,83 @@ class Cache:
                 (key, json.dumps(value, separators=(",", ":")), time.time()),
             )
 
+    def watchlist_add(self, hit: SearchHit) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO watchlist (tmdb_id, media_type, title, year, poster_path, added) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    hit.tmdb_id,
+                    hit.media_type,
+                    hit.title,
+                    hit.year,
+                    hit.poster_path,
+                    time.time(),
+                ),
+            )
+
+    def watchlist_remove(self, tmdb_id: int, media_type: str) -> None:
+        with self._lock:
+            self._db.execute(
+                "DELETE FROM watchlist WHERE tmdb_id = ? AND media_type = ?",
+                (tmdb_id, media_type),
+            )
+
+    def watchlist_has(self, tmdb_id: int, media_type: str) -> bool:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT 1 FROM watchlist WHERE tmdb_id = ? AND media_type = ?",
+                (tmdb_id, media_type),
+            ).fetchone()
+        return row is not None
+
+    def watchlist_toggle(self, hit: SearchHit) -> bool:
+        """Returns True if the title is now on the list."""
+        if self.watchlist_has(hit.tmdb_id, hit.media_type):
+            self.watchlist_remove(hit.tmdb_id, hit.media_type)
+            return False
+        self.watchlist_add(hit)
+        return True
+
+    def watchlist_all(self) -> list[SearchHit]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT tmdb_id, media_type, title, year, poster_path "
+                "FROM watchlist ORDER BY added DESC"
+            ).fetchall()
+        return [
+            SearchHit(
+                tmdb_id=row[0], title=row[2], year=row[3], overview="",
+                poster_path=row[4], media_type=row[1],
+            )
+            for row in rows
+        ]
+
+    def history_add(self, query: str, media_type: str) -> None:
+        query = query.strip()
+        if not query:
+            return
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO history (query, media_type, last_used, uses) "
+                "VALUES (?, ?, ?, 1) "
+                "ON CONFLICT(query, media_type) DO UPDATE SET "
+                "last_used = excluded.last_used, uses = uses + 1",
+                (query, media_type, time.time()),
+            )
+
+    def history_recent(self, limit: int = 20) -> list[str]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT query FROM history ORDER BY last_used DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def history_clear(self) -> None:
+        with self._lock:
+            self._db.execute("DELETE FROM history")
+            
     def delete(self, key: str) -> None:
         with self._lock:
             self._db.execute("DELETE FROM kv WHERE key = ?", (key,))
@@ -96,6 +192,11 @@ class Cache:
             tmp.unlink(missing_ok=True)
 
     def purge(self) -> None:
+        """Clears cached API responses and posters.
+
+        Deliberately leaves `watchlist` and `history` alone - those are the
+        user's own data, not a cache.
+        """
         with self._lock:
             self._db.execute("DELETE FROM kv")
         for pattern in ("*.img", "*.tmp"):

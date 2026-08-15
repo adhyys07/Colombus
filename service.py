@@ -8,8 +8,21 @@ import httpx
 
 from cache import Cache
 from config import Config
-from models import MOVIE, TV, Genre, Movie, Rating, Review, SearchHit
-from sources import OMDBSource, TMDBSource, WikipediaSource
+from models import (
+    MOVIE,
+    TV,
+    Episode,
+    Genre,
+    Movie,
+    Person,
+    Provider,
+    Rating,
+    Review,
+    Season,
+    SearchHit,
+    Video,
+)
+from sources import OMDBSource, TMDBError, TMDBSource, WikipediaSource
 
 WRITER_JOBS = {"Writer", "Screenplay", "Story", "Screenstory", "Author"}
 CAST_LIMIT = 12
@@ -63,8 +76,48 @@ class MovieService:
     async def genres(self, media_type: str = MOVIE) -> list[Genre]:
         return await self.tmdb.genres(media_type)
 
-    async def by_genre(self, media_type: str, genre_id: int) -> list[SearchHit]:
-        return await self.tmdb.discover(media_type, genre_id)
+    async def by_genre(
+        self, media_type: str, genre_id: int | None, original_language: str = ""
+    ) -> list[SearchHit]:
+        return await self.tmdb.discover(media_type, genre_id, original_language)
+
+    async def person_titles(self, person_id: int) -> list[SearchHit]:
+        return await self.tmdb.person_credits(person_id)
+
+    async def season(self, tv_id: int, number: int) -> Season:
+        payload = await self.tmdb.season(tv_id, number)
+        return Season(
+            number=payload.get("season_number", number),
+            name=payload.get("name") or f"Season {number}",
+            episodes=[
+                Episode(
+                    number=row.get("episode_number", 0),
+                    name=row.get("name") or "",
+                    overview=row.get("overview") or "",
+                    air_date=row.get("air_date") or "",
+                    runtime=row.get("runtime") or None,
+                    vote_average=float(row.get("vote_average") or 0.0),
+                )
+                for row in payload.get("episodes", [])
+            ],
+        )
+
+    # -------------------------------------------------------- user's own data
+
+    def watchlist(self) -> list[SearchHit]:
+        return self.cache.watchlist_all()
+
+    def watchlist_toggle(self, hit: SearchHit) -> bool:
+        return self.cache.watchlist_toggle(hit)
+
+    def watchlist_has(self, tmdb_id: int, media_type: str) -> bool:
+        return self.cache.watchlist_has(tmdb_id, media_type)
+
+    def remember_search(self, query: str, media_type: str) -> None:
+        self.cache.history_add(query, media_type)
+
+    def recent_searches(self, limit: int = 20) -> list[str]:
+        return self.cache.history_recent(limit)
 
     # ---------------------------------------------------------------- details
 
@@ -72,6 +125,16 @@ class MovieService:
         """TMDB is required; OMDb and Wikipedia enrich it opportunistically."""
         payload = await self.tmdb.title(media_type, tmdb_id)
         movie = self._build(payload, media_type)
+
+        # A localised entry often has no overview; borrow the English one
+        # rather than showing an empty pane.
+        if not self.config.is_english and not (movie.overview and movie.tagline):
+            try:
+                overview, tagline = await self.tmdb.english_text(media_type, tmdb_id)
+                movie.overview = movie.overview or overview
+                movie.tagline = movie.tagline or tagline
+            except TMDBError:
+                pass  # the fallback is a nicety, never fatal
 
         extras = await asyncio.gather(
             self.omdb.ratings(movie.imdb_id),
@@ -133,6 +196,20 @@ class MovieService:
             c.get("name", "") for c in payload.get("production_countries", [])
         ] or list(payload.get("origin_country") or [])
 
+        providers, provider_link = self._providers(payload)
+        recommendations = self.tmdb._hits(
+            payload.get("recommendations") or {}, media_type, 20
+        )
+        season_numbers = (
+            [
+                season["season_number"]
+                for season in payload.get("seasons", [])
+                if season.get("season_number")  # skip specials (season 0)
+            ]
+            if is_tv
+            else []
+        )
+
         return Movie(
             tmdb_id=payload["id"],
             title=(
@@ -153,11 +230,12 @@ class MovieService:
             genres=[g["name"] for g in payload.get("genres", []) if g.get("name")],
             director=", ".join(directors),
             writers=writers[:4],
-            cast=[
-                c["name"]
-                for c in (credits.get("cast") or [])[:CAST_LIMIT]
-                if c.get("name")
-            ],
+            cast=self._cast(credits),
+            providers=providers,
+            provider_link=provider_link,
+            videos=self._videos(payload),
+            recommendations=recommendations,
+            season_numbers=season_numbers,
             overview=payload.get("overview") or "",
             poster_path=poster_path,
             poster_url=(
@@ -178,6 +256,45 @@ class MovieService:
             seasons=payload.get("number_of_seasons") if is_tv else None,
             episodes=payload.get("number_of_episodes") if is_tv else None,
         )
+
+    def _providers(self, payload: dict) -> tuple[list[Provider], str]:
+        results = (payload.get("watch/providers") or {}).get("results") or {}
+        block = results.get(self.config.region) or {}
+        providers = [
+            Provider(name=entry["provider_name"], kind=kind)
+            for kind in ("flatrate", "free", "ads", "rent", "buy")
+            for entry in block.get(kind, [])
+            if entry.get("provider_name")
+        ]
+        return providers, block.get("link", "")
+
+    @staticmethod
+    def _videos(payload: dict) -> list[Video]:
+        rows = (payload.get("videos") or {}).get("results") or []
+        videos = [
+            Video(
+                name=row.get("name") or "",
+                key=row["key"],
+                kind=row.get("type") or "",
+                site=row.get("site") or "",
+            )
+            for row in rows
+            if row.get("key") and row.get("site") == "YouTube"
+        ]
+        videos.sort(key=lambda v: (v.kind != "Trailer", v.kind != "Teaser"))
+        return videos
+
+    @staticmethod
+    def _cast(credits: dict) -> list[Person]:
+        return [
+            Person(
+                tmdb_id=row["id"],
+                name=row["name"],
+                role=row.get("character") or "",
+            )
+            for row in (credits.get("cast") or [])[:CAST_LIMIT]
+            if row.get("id") and row.get("name")
+        ]
 
     @staticmethod
     def _reviews(payload: dict) -> list[Review]:

@@ -8,7 +8,8 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from models import Movie, Rating
+from i18n import _
+from models import Movie, Rating, Season
 
 BAR_WIDTH = 24
 MAX_REVIEWS = 3
@@ -61,21 +62,33 @@ def facts_table(movie: Movie) -> Table:
     table.add_column(ratio=1)
 
     rows: list[tuple[str, str]] = [
-        ("Creator" if movie.is_series else "Director", movie.director or DASH),
-        ("Writers", ", ".join(movie.writers) or DASH),
-        ("Cast", ", ".join(movie.cast) or DASH),
-        ("Genre", ", ".join(movie.genres) or DASH),
-        ("Episode", _runtime(movie.runtime)) if movie.is_series
-        else ("Runtime", _runtime(movie.runtime)),
-        ("Rated", movie.certificate or DASH),
-        ("Language", ", ".join(filter(None, movie.languages)) or DASH),
-        ("Country", ", ".join(filter(None, movie.countries)) or DASH),
+        (
+            _("creator") if movie.is_series else _("director"),
+            movie.director or DASH,
+        ),
+        (_("writers"), ", ".join(movie.writers) or DASH),
+        (_("cast"), ", ".join(person.name for person in movie.cast) or DASH),
+        (_("genre"), ", ".join(movie.genres) or DASH),
+        (
+            _("episode") if movie.is_series else _("runtime"),
+            _runtime(movie.runtime),
+        ),
+        (_("rated"), movie.certificate or DASH),
+        (_("language"), ", ".join(filter(None, movie.languages)) or DASH),
+        (_("country"), ", ".join(filter(None, movie.countries)) or DASH),
     ]
     if not movie.is_series:
-        rows += [("Budget", _money(movie.budget)), ("Revenue", _money(movie.revenue))]
+        rows += [
+            (_("budget"), _money(movie.budget)),
+            (_("revenue"), _money(movie.revenue)),
+        ]
     if movie.is_series:
-        rows.insert(4, ("Seasons", str(movie.seasons) if movie.seasons else DASH))
-        rows.insert(5, ("Episodes", str(movie.episodes) if movie.episodes else DASH))
+        rows.insert(4, (_("seasons"), str(movie.seasons) if movie.seasons else DASH))
+        rows.insert(5, (_("episodes"), str(movie.episodes) if movie.episodes else DASH))
+    if stream := movie.providers_of("flatrate", "free", "ads"):
+        rows.append((_("stream"), ", ".join(stream)))
+    if paid := movie.providers_of("rent", "buy"):
+        rows.append((_("rent_buy"), ", ".join(paid)))
     if movie.imdb_url:
         rows.append(("IMDb", movie.imdb_url))
 
@@ -88,7 +101,8 @@ def _header(movie: Movie) -> Text:
     header = Text(movie.title, style="bold white")
     if movie.year:
         header.append(f"  ({movie.year})", style="dim")
-    header.append("  SERIES" if movie.is_series else "  FILM", style="dim cyan")
+    badge = _("series_badge") if movie.is_series else _("film_badge")
+    header.append(f"  {badge}", style="dim cyan")
     if movie.tagline:
         header.append(f"\n{movie.tagline}", style="italic dim")
     return header
@@ -99,26 +113,26 @@ def movie_renderable(movie: Movie) -> RenderableType:
 
     if movie.ratings:
         parts += [
-            Rule("Ratings", style="dim"),
+            Rule(_("ratings"), style="dim"),
             Group(*(rating_bar(rating) for rating in movie.ratings)),
         ]
 
     if movie.overview:
-        parts += [Panel(movie.overview, title="Overview", border_style="dim")]
+        parts += [Panel(movie.overview, title=_("overview"), border_style="dim")]
 
     if movie.wiki_extract:
         subtitle = movie.wiki_url or None
         parts += [
             Panel(
                 movie.wiki_extract,
-                title="Wikipedia",
+                title=_("wikipedia"),
                 subtitle=subtitle,
                 border_style="dim",
             )
         ]
 
     if movie.reviews:
-        parts.append(Rule("Reviews", style="dim"))
+        parts.append(Rule(_("reviews"), style="dim"))
         for review in movie.reviews[:MAX_REVIEWS]:
             title = review.author
             if review.rating is not None:
@@ -133,10 +147,13 @@ def movie_renderable(movie: Movie) -> RenderableType:
 def reviews_renderable(movie: Movie) -> RenderableType:
     """Every review in full, for the Reviews tab."""
     if not movie.reviews:
-        return message_renderable(f"No reviews on TMDB for {movie.label}.")
+        return message_renderable(_("no_reviews", title=movie.label))
 
     count = len(movie.reviews)
-    header = Text(f"{count} review{'s' if count != 1 else ''}", style="bold")
+    header = Text(
+        _("review_count_one") if count == 1 else _("reviews_count", count=count),
+        style="bold",
+    )
     header.append(f"  ·  {movie.label}", style="dim")
     parts: list[RenderableType] = [header, Rule(style="dim")]
 
@@ -153,6 +170,26 @@ def reviews_renderable(movie: Movie) -> RenderableType:
         parts.append(Panel(body, title=title, title_align="left", border_style="dim"))
 
     return Group(*parts)
+
+
+def episodes_renderable(season: Season) -> RenderableType:
+    if not season.episodes:
+        return message_renderable(_("no_episodes"))
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold cyan", justify="right", no_wrap=True)
+    table.add_column(ratio=1)
+    table.add_column(style="dim", no_wrap=True)
+
+    for episode in season.episodes:
+        score = f"{episode.vote_average:.1f}" if episode.vote_average else DASH
+        table.add_row(
+            f"E{episode.number}", episode.name, f"{episode.air_date}  {score}"
+        )
+
+    header = Text(season.name, style="bold")
+    header.append(f"  {len(season.episodes)} {_('episodes').lower()}", style="dim")
+    return Group(header, Rule(style="dim"), table)
 
 
 def message_renderable(text: str, style: str = "dim") -> RenderableType:

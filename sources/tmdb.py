@@ -36,8 +36,14 @@ def _row_year(row: dict) -> str:
 class TMDBSource:
     BASE = "https://api.themoviedb.org/3"
     IMAGE_BASE = "https://image.tmdb.org/t/p"
-    MOVIE_APPEND = "credits,reviews,release_dates,external_ids"
-    TV_APPEND = "credits,reviews,content_ratings,external_ids"
+    MOVIE_APPEND = (
+        "credits,reviews,release_dates,external_ids,"
+        "videos,recommendations,watch/providers"
+    )
+    TV_APPEND = (
+        "credits,reviews,content_ratings,external_ids,"
+        "videos,recommendations,watch/providers"
+    )
 
     def __init__(self, config: Config, cache: Cache, client: httpx.AsyncClient) -> None:
         self._config = config
@@ -55,8 +61,13 @@ class TMDBSource:
         path: str,
         params: dict[str, str] | None = None,
         cache_key: str | None = None,
+        language: str | None = None,
     ) -> dict:
+        lang = language or self._config.language
+        # Cached payloads are language-specific; without this suffix, switching
+        # language would serve whatever was fetched first.
         if cache_key:
+            cache_key = f"{cache_key}:{lang}"
             cached = self._cache.get_json(cache_key)
             if cached is not None:
                 return cached
@@ -65,7 +76,7 @@ class TMDBSource:
         try:
             response = await self._client.get(
                 f"{self.BASE}{path}",
-                params={**auth_params, **(params or {})},
+                params={**auth_params, "language": lang, **(params or {})},
                 headers=headers,
             )
             response.raise_for_status()
@@ -163,16 +174,56 @@ class TMDBSource:
         ]
 
     async def discover(
-        self, media_type: str, genre_id: int, limit: int = 30
+        self,
+        media_type: str,
+        genre_id: int | None = None,
+        original_language: str = "",
+        limit: int = 30,
     ) -> list[SearchHit]:
         if media_type not in (MOVIE, TV):
             media_type = MOVIE
+        params = {"sort_by": "popularity.desc"}
+        if genre_id:
+            params["with_genres"] = str(genre_id)
+        if original_language:
+            params["with_original_language"] = original_language
         data = await self._get(
             f"/discover/{media_type}",
-            {"with_genres": str(genre_id), "sort_by": "popularity.desc"},
-            cache_key=f"tmdb:discover:{media_type}:{genre_id}",
+            params,
+            cache_key=(
+                f"tmdb:discover:{media_type}:"
+                f"{genre_id or 'any'}:{original_language or 'any'}"
+            ),
         )
         return self._hits(data, media_type, limit)
+
+    async def person_credits(self, person_id: int, limit: int = 40) -> list[SearchHit]:
+        data = await self._get(
+            f"/person/{person_id}/combined_credits",
+            cache_key=f"tmdb:person:{person_id}",
+        )
+        rows = list(data.get("cast") or []) + list(data.get("crew") or [])
+        deduped: dict[tuple[int, str], dict] = {}
+        for row in rows:
+            key = (row.get("id"), row.get("media_type"))
+            if key[0] is not None and key not in deduped:
+                deduped[key] = row
+        return self._hits({"results": list(deduped.values())}, "all", limit)
+
+    async def season(self, tv_id: int, season_number: int) -> dict:
+        return await self._get(
+            f"/tv/{tv_id}/season/{season_number}",
+            cache_key=f"tmdb:season:{tv_id}:{season_number}",
+        )
+
+    async def english_text(self, media_type: str, tmdb_id: int) -> tuple[str, str]:
+        """(overview, tagline) in English, for filling gaps in a translation."""
+        data = await self._get(
+            f"/{media_type}/{tmdb_id}",
+            cache_key=f"tmdb:en:{media_type}:{tmdb_id}",
+            language="en-US",
+        )
+        return data.get("overview") or "", data.get("tagline") or ""
 
     # --------------------------------------------------------------- details
 
@@ -183,7 +234,7 @@ class TMDBSource:
         return await self._get(
             f"/{media_type}/{tmdb_id}",
             {"append_to_response": append},
-            cache_key=f"tmdb:{media_type}:{tmdb_id}",
+            cache_key=f"tmdb:v2:{media_type}:{tmdb_id}",
         )
 
     async def poster(self, poster_path: str | None) -> bytes | None:

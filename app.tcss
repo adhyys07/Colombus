@@ -57,9 +57,38 @@ Screen {
     align: center middle;
 }
 
-#detail {
+#info {
     height: 1fr;
-    padding: 0 1;
+}
+
+#info ContentSwitcher {
+    height: 1fr;
     border: round $primary;
     background: $panel;
+}
+
+#detail, #reviews {
+    height: 1fr;
+    padding: 0 1;
+    background: $panel;
+}
+
+#cast {
+    height: 1fr;
+    padding: 0 1;
+    background: $panel;
+}
+
+#cast > ListItem {
+    padding: 0 1;
+}
+
+#episodes {
+    height: 1fr;
+    padding: 0 1;
+    background: $panel;
+}
+
+#episodes #season {
+    margin-bottom: 1;
 }

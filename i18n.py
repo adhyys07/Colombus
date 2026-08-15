@@ -1,0 +1,177 @@
+"""Tiny message catalogue for the app's own strings.
+
+Deliberately import-time rather than instance-level: Textual evaluates
+BINDINGS when the class is defined, so translations must be available
+before any App exists. Changing language therefore needs a restart.
+
+Catalogues may be partial - any missing key falls back to English, so
+languages can be filled in gradually.
+"""
+
+from __future__ import annotations
+
+import os
+
+CATALOG: dict[str, dict[str, str]] = {
+    "en": {
+        "search": "Search",
+        "trending": "Trending",
+        "categories": "Categories",
+        "watchlist": "Watchlist",
+        "details": "Details",
+        "reviews": "Reviews",
+        "cast": "Cast",
+        "episodes": "Episodes",
+        "poster": "Poster",
+        "results": "Results",
+        "search_placeholder": "Search for a film or series...",
+        "movies": "Movies",
+        "series": "Series",
+        "film_badge": "FILM",
+        "series_badge": "SERIES",
+        "both": "Both",
+        "this_week": "This week",
+        "today": "Today",
+        "category_prompt": "Category...",
+        "season_prompt": "Season...",
+        "any_language": "Any language",
+        "quit": "Quit",
+        "clear_cache": "Clear cache",
+        "next_section": "Next section",
+        "details_reviews": "Details/Reviews",
+        "more_like_this": "More like this",
+        "trailer": "Trailer",
+        "open_page": "Open page",
+        "watchlist_toggle": "Watchlist +/-",
+        "director": "Director",
+        "creator": "Creator",
+        "writers": "Writers",
+        "genre": "Genre",
+        "runtime": "Runtime",
+        "episode": "Episode",
+        "rated": "Rated",
+        "language": "Language",
+        "country": "Country",
+        "budget": "Budget",
+        "revenue": "Revenue",
+        "seasons": "Seasons",
+        "stream": "Stream",
+        "rent_buy": "Rent/Buy",
+        "overview": "Overview",
+        "ratings": "Ratings",
+        "wikipedia": "Wikipedia",
+        "no_poster": "No poster",
+        "no_reviews": "No reviews on TMDB for {title}.",
+        "reviews_count": "{count} reviews",
+        "review_count_one": "1 review",
+        "pick_title_reviews": "Pick a title to read its reviews.",
+        "pick_series_episodes": "Pick a series to list episodes.",
+        "episodes_series_only": "Episodes are only listed for series.",
+        "no_episodes": "No episodes listed for this season.",
+        "searching": "Searching for '{query}'...",
+        "nothing_found": "Nothing found for '{query}'.",
+        "type_a_title": "Type a title and press enter.",
+        "recent_searches": "Recent searches - press enter on one to run it.",
+        "loading_trending": "Loading trending titles...",
+        "nothing_trending": "Nothing trending right now.",
+        "loading_category": "Loading category...",
+        "pick_category": "Pick a category or a language.",
+        "nothing_in_category": "Nothing matched that filter.",
+        "loading_title": "Loading {title}...",
+        "loading_person": "Loading titles with {name}...",
+        "loading_season": "Loading season {number}...",
+        "watchlist_empty": "Your watchlist is empty - press ctrl+d on a title to add it.",
+        "watchlist_added": "Added to watchlist: {title}",
+        "watchlist_removed": "Removed from watchlist: {title}",
+        "no_recommendations": "No recommendations for this title.",
+        "no_trailer": "No trailer available.",
+        "opening": "Opening {name}",
+        "search_begin": "Search for a film to begin.",
+        "cache_cleared": "Cached responses and posters cleared.",
+    },
+    "hi": {
+        "search": "खोजें",
+        "trending": "लोकप्रिय",
+        "categories": "श्रेणियाँ",
+        "watchlist": "सूची",
+        "details": "विवरण",
+        "reviews": "समीक्षाएँ",
+        "cast": "कलाकार",
+        "episodes": "एपिसोड",
+        "poster": "पोस्टर",
+        "results": "परिणाम",
+        "search_placeholder": "फ़िल्म या सीरीज़ खोजें...",
+        "movies": "फ़िल्में",
+        "series": "सीरीज़",
+        "film_badge": "फ़िल्म",
+        "series_badge": "सीरीज़",
+        "both": "दोनों",
+        "this_week": "इस सप्ताह",
+        "today": "आज",
+        "any_language": "कोई भी भाषा",
+        "quit": "बंद करें",
+        "director": "निर्देशक",
+        "creator": "निर्माता",
+        "writers": "लेखक",
+        "genre": "शैली",
+        "runtime": "अवधि",
+        "rated": "प्रमाणपत्र",
+        "language": "भाषा",
+        "country": "देश",
+        "overview": "सारांश",
+        "ratings": "रेटिंग",
+        "searching": "'{query}' खोजा जा रहा है...",
+        "nothing_found": "'{query}' के लिए कुछ नहीं मिला।",
+        "type_a_title": "कोई शीर्षक लिखें और एंटर दबाएँ।",
+    },
+    "es": {
+        "search": "Buscar",
+        "trending": "Tendencias",
+        "categories": "Categorías",
+        "watchlist": "Lista",
+        "details": "Detalles",
+        "reviews": "Reseñas",
+        "cast": "Reparto",
+        "episodes": "Episodios",
+        "poster": "Póster",
+        "results": "Resultados",
+        "search_placeholder": "Busca una película o serie...",
+        "movies": "Películas",
+        "series": "Series",
+        "film_badge": "PELÍCULA",
+        "series_badge": "SERIE",
+        "both": "Ambos",
+        "this_week": "Esta semana",
+        "today": "Hoy",
+        "any_language": "Cualquier idioma",
+        "quit": "Salir",
+        "director": "Director",
+        "creator": "Creador",
+        "writers": "Guionistas",
+        "genre": "Género",
+        "runtime": "Duración",
+        "rated": "Clasificación",
+        "language": "Idioma",
+        "country": "País",
+        "overview": "Sinopsis",
+        "ratings": "Puntuaciones",
+        "searching": "Buscando '{query}'...",
+        "nothing_found": "No se encontró nada para '{query}'.",
+        "type_a_title": "Escribe un título y pulsa enter.",
+    },
+}
+
+UI_LANGUAGE = (os.getenv("COLOMBUS_UI_LANGUAGE") or "en").strip().lower().split("-")[0]
+
+
+def _(key: str, **kwargs: object) -> str:
+    """Translate `key`, falling back to English and then to the key itself."""
+    text = CATALOG.get(UI_LANGUAGE, {}).get(key) or CATALOG["en"].get(key) or key
+    try:
+        return text.format(**kwargs) if kwargs else text
+    except (KeyError, IndexError):
+        return text
+
+
+def available_languages() -> list[str]:
+    return sorted(CATALOG)

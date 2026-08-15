@@ -21,13 +21,21 @@ score line. Everything still works without it.
 
 ## Sections
 
-Three sections share one results list, switched with the tabs (or `ctrl+t`):
+Four sections share one results list, switched with the tabs (or `ctrl+t`):
 
 | Section | What it shows |
 | ------- | ------------- |
 | **Search** | Titles matching your query |
 | **Trending** | What's trending today or this week |
-| **Categories** | Everything in a genre, most popular first |
+| **Categories** | Everything in a genre or original language |
+| **Watchlist** | Titles you marked with `ctrl+d`, newest first |
+
+The right-hand pane has four tabs: **Details**, **Reviews**, **Cast** and
+**Episodes**. Cast lists the billed roles - select one to browse that person's
+filmography. Episodes is enabled only for series, with a season picker. Details
+carries the facts, score bars, overview and Wikipedia summary; Reviews shows
+every review TMDB has for the title in full, with author, score and date. The
+Reviews tab is labelled with its count, and `f2` cycles the four.
 
 The **Movies / Series / Both** selector applies to every section, so you can
 browse trending series, search across both at once, or list every title in a
@@ -49,6 +57,11 @@ python main.py --env path/to/.env
 | `enter`  | run the search            |
 | `↑` `↓`  | move through results      |
 | `ctrl+t` | next section              |
+| `f2`     | cycle Details/Reviews/Cast/Episodes |
+| `f3`     | more like this            |
+| `f4`     | play trailer in browser   |
+| `f5`     | open IMDb/TMDB page       |
+| `ctrl+d` | add/remove from watchlist |
 | `escape` | jump back to results      |
 | `ctrl+r` | clear the cache           |
 | `ctrl+q` | quit                      |
@@ -79,6 +92,9 @@ dist\colombus.exe "blade runner 2049"
 | `COLOMBUS_CACHE_TTL`    | `604800` (7 days)  | cache lifetime in seconds; `0` never expires |
 | `COLOMBUS_POSTER_SIZE`  | `w342`             | TMDB poster width                |
 | `COLOMBUS_HTTP_RETRIES` | `3`                | connection retries; raise it if you see `Could not reach TMDB` |
+| `COLOMBUS_REGION`       | `US`               | where-to-watch region, e.g. `IN` |
+| `COLOMBUS_LANGUAGE`     | `en-US`            | language of titles and overviews from TMDB |
+| `COLOMBUS_UI_LANGUAGE`  | `en`               | language of the app's own labels (`en`, `hi`, `es`) |
 | `COLOMBUS_POSTER_PROTOCOL` | `auto`          | poster backend, see below |
 
 ## Layout
@@ -89,10 +105,11 @@ dist\colombus.exe "blade runner 2049"
 | `app.py`      | Textual app: layout, key bindings, background workers   |
 | `service.py`  | Fans one lookup across all sources into a single `Movie` |
 | `sources/`    | TMDB (required), OMDb and Wikipedia (both optional)     |
-| `widgets/`    | Results list, poster pane, detail pane                  |
+| `widgets/`    | Results list, poster, detail and reviews panes           |
 | `render.py`   | Rich renderables for the detail pane                    |
 | `cache.py`    | SQLite JSON cache plus an on-disk poster store          |
-| `models.py`   | `SearchHit`, `Movie`, `Rating`, `Review`                |
+| `models.py`   | `SearchHit`, `Movie`, `Rating`, `Review`, `Person`, `Season` |
+| `i18n.py`     | Message catalogue for the app's own strings             |
 | `config.py`   | Environment and `.env` loading                          |
 
 ## Posters

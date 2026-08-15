@@ -86,6 +86,51 @@ class Review:
 
 
 @dataclass
+class Person:
+    tmdb_id: int
+    name: str
+    role: str = ""
+
+    @property
+    def label(self) -> str:
+        return f"{self.name} ({self.role})" if self.role else self.name
+
+
+@dataclass
+class Provider:
+    name: str
+    kind: str  # flatrate | free | ads | rent | buy
+
+
+@dataclass
+class Video:
+    name: str
+    key: str
+    kind: str = "Trailer"
+    site: str = "YouTube"
+
+    @property
+    def url(self) -> str:
+        return f"https://www.youtube.com/watch?v={self.key}"
+
+
+@dataclass
+class Episode:
+    number: int
+    name: str
+    overview: str = ""
+    air_date: str = ""
+    runtime: int | None = None
+    vote_average: float = 0.0
+
+@dataclass
+class Season:
+    number: int
+    name: str = ""
+    episodes: list[Episode] = field(default_factory=list)
+
+
+@dataclass
 class Genre:
     """A TMDB category, used to populate the Categories tab."""
 
@@ -108,7 +153,12 @@ class Movie:
     genres: list[str] = field(default_factory=list)
     director: str = ""
     writers: list[str] = field(default_factory=list)
-    cast: list[str] = field(default_factory=list)
+    cast: list[Person] = field(default_factory=list)
+    providers: list[Provider] = field(default_factory=list)
+    provider_link: str = ""
+    videos: list[Video] = field(default_factory=list)
+    recommendations: list[SearchHit] = field(default_factory=list)
+    season_numbers: list[int] = field(default_factory=list)
     overview: str = ""
     poster_path: str | None = None
     poster_url: str | None = None
@@ -135,3 +185,22 @@ class Movie:
     @property
     def label(self) -> str:
         return f"{self.title} ({self.year})" if self.year else self.title
+
+    @property
+    def trailer(self) -> Video | None:
+        for video in self.videos:
+            if video.kind == "Trailer":
+                return video
+        return self.videos[0] if self.videos else None
+
+    @property
+    def tmdb_url(self) -> str:
+        return f"https://www.themoviedb.org/{self.media_type}/{self.tmdb_id}"
+
+    def providers_of(self, *kinds: str) -> list[str]:
+        seen: list[str] = []
+        for provider in self.providers:
+            if provider.kind in kinds and provider.name not in seen:
+                seen.append(provider.name)
+        return seen
+

@@ -21,6 +21,9 @@ DEFAULT_CACHE_TTL = 7 * 24 * 3600
 DEFAULT_POSTER_SIZE = "w342"
 DEFAULT_HTTP_RETRIES = 3
 DEFAULT_POSTER_PROTOCOL = "auto"
+DEFAULT_REGION = "US"
+DEFAULT_LANGUAGE = "en-US"
+DEFAULT_UI_LANGUAGE = "en"
 # Wikimedia rejects generic User-Agents; theirs must carry a contact URL.
 # Override COLOMBUS_USER_AGENT to point at your own project or e-mail.
 DEFAULT_USER_AGENT = (
@@ -66,6 +69,18 @@ class Config:
     http_retries: int = DEFAULT_HTTP_RETRIES
     user_agent: str = DEFAULT_USER_AGENT
     poster_protocol: str = DEFAULT_POSTER_PROTOCOL
+    region: str = DEFAULT_REGION
+    language: str = DEFAULT_LANGUAGE
+    ui_language: str = DEFAULT_UI_LANGUAGE
+
+    @property
+    def language_code(self) -> str:
+        """Just the ISO 639-1 half: 'hi' from 'hi-IN'."""
+        return self.language.split("-")[0].lower()
+
+    @property
+    def is_english(self) -> bool:
+        return self.language_code == "en"
 
     @property
     def has_omdb(self) -> bool:
@@ -109,4 +124,10 @@ class Config:
             poster_protocol=(
                 os.getenv("COLOMBUS_POSTER_PROTOCOL") or DEFAULT_POSTER_PROTOCOL
             ).strip().lower(),
+            region=(os.getenv("COLOMBUS_REGION") or DEFAULT_REGION).strip().upper(),
+            language=(os.getenv("COLOMBUS_LANGUAGE") or DEFAULT_LANGUAGE).strip()
+            or DEFAULT_LANGUAGE,
+            ui_language=(os.getenv("COLOMBUS_UI_LANGUAGE") or DEFAULT_UI_LANGUAGE)
+            .strip()
+            .lower(),
         )
