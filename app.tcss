@@ -108,3 +108,10 @@ Screen {
     padding: 0 1;
     background: $panel;
 }
+
+#player {
+    height: 1fr;
+    padding: 0 1;
+    background: $panel;
+    align: center middle;
+}

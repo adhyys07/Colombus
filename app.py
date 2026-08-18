@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 import webbrowser
 from pathlib import Path
 
@@ -22,7 +23,15 @@ from textual.widgets import (
 
 from config import Config
 from i18n import _
+from widgets.artposter import braille_art
 from models import MOVIE, PERSON, TV, Filters, Movie, SearchHit
+from player import (
+    TrailerError,
+    audio_available,
+    missing_tools,
+    play,
+    resolve_stream,
+)
 from service import MovieService
 from sources import TMDBError
 from widgets import (
@@ -33,6 +42,7 @@ from widgets import (
     PersonResult,
     PosterPane,
     QueryItem,
+    PlayerPane,
     ResultsList,
     ReviewsPane,
     StatsPane,
@@ -49,6 +59,7 @@ REVIEWS_PANE = "pane-reviews"
 CAST_PANE = "pane-cast"
 EPISODES_PANE = "pane-episodes"
 STATS_PANE = "pane-stats"
+PLAYER_PANE = "pane-trailer"
 
 MEDIA_OPTIONS = [
     (_("movies"), MOVIE),
@@ -131,6 +142,7 @@ class ColombusApp(App[None]):
         ("ctrl+d", "toggle_watchlist", _("watchlist_toggle")),
         ("ctrl+f", "toggle_filters", _("filters")),
         ("f6", "toggle_watched", _("mark_watched")),
+        ("f7", "play_trailer", _("play_here")),
         ("ctrl+r", "purge_cache", _("clear_cache")),
         ("ctrl+q", "quit", _("quit")),
     ]
@@ -145,6 +157,10 @@ class ColombusApp(App[None]):
         self._genres_loaded_for: tuple[str, str] | None = None
         self._filters_open = False
         self._current: Movie | None = None
+        # Starts set: 'set' means nothing is playing, so the first
+        # f7 reads as play rather than stop.
+        self._stop_player = threading.Event()
+        self._stop_player.set()
         self._current_hit: SearchHit | None = None
 
     def compose(self) -> ComposeResult:
@@ -198,6 +214,8 @@ class ColombusApp(App[None]):
                         yield EpisodesPane(id="episodes")
                     with TabPane(_("stats"), id=STATS_PANE):
                         yield StatsPane(id="stats")
+                    with TabPane(_("trailer"), id=PLAYER_PANE):
+                        yield PlayerPane(id="player")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -213,6 +231,7 @@ class ColombusApp(App[None]):
         self.check_series_updates()
 
     async def on_unmount(self) -> None:
+        self.stop_playback()
         await self._service.aclose()
 
     # ------------------------------------------------------------------ helpers
@@ -379,6 +398,7 @@ class ColombusApp(App[None]):
             self._set_review_count(0)
             return
 
+        self.stop_playback()
         self._current, self._current_hit = movie, hit
         detail.show_movie(movie)
         self.query_one(ReviewsPane).show_movie(movie)
@@ -518,7 +538,14 @@ class ColombusApp(App[None]):
 
     def action_cycle_info(self) -> None:
         tabs = self.query_one("#info", TabbedContent)
-        order = [DETAILS_PANE, REVIEWS_PANE, CAST_PANE, EPISODES_PANE, STATS_PANE]
+        order = [
+            DETAILS_PANE,
+            REVIEWS_PANE,
+            CAST_PANE,
+            EPISODES_PANE,
+            STATS_PANE,
+            PLAYER_PANE,
+        ]
         start = order.index(tabs.active) if tabs.active in order else 0
         for step in range(1, len(order) + 1):
             candidate = order[(start + step) % len(order)]
@@ -537,6 +564,70 @@ class ColombusApp(App[None]):
         results = self.query_one(ResultsList)
         await results.show(hits)
         results.focus()
+
+    # ------------------------------------------------------------ trailer
+
+    def stop_playback(self) -> None:
+        self._stop_player.set()
+
+    def action_play_trailer(self) -> None:
+        """f7 toggles: play the trailer here, or stop one already running."""
+        pane = self.query_one(PlayerPane)
+        if not self._stop_player.is_set():
+            # a run is in flight - treat f7 as stop
+            self.stop_playback()
+            pane.show_message(_("trailer_stopped"))
+            return
+
+        trailer = self._current.trailer if self._current else None
+        if trailer is None:
+            self.notify(_("no_trailer"), severity="warning")
+            return
+        if missing := missing_tools():
+            pane.show_message(
+                _("trailer_missing_tools", tools=", ".join(missing)), "red"
+            )
+            self.query_one("#info", TabbedContent).active = PLAYER_PANE
+            return
+
+        self.query_one("#info", TabbedContent).active = PLAYER_PANE
+        pane.show_message(_("trailer_resolving"))
+        cols, rows = pane.grid()
+        # Starts set: 'set' means nothing is playing, so the first
+        # f7 reads as play rather than stop.
+        self._stop_player = threading.Event()  # clear: a run is now in flight
+        self.run_trailer(trailer.url, cols, rows, self._stop_player)
+
+    @work(thread=True, exclusive=True, group="player")
+    def run_trailer(
+        self, url: str, cols: int, rows: int, stop: threading.Event
+    ) -> None:
+        """Decoding and rendering are blocking work, so this is a thread
+        worker that paints through call_from_thread."""
+        pane = self.query_one(PlayerPane)
+        try:
+            stream_url = resolve_stream(url)
+            if stop.is_set():
+                return
+            self.call_from_thread(pane.show_message, _("trailer_buffering"))
+            # The muxed stream carries the sound too, so the same URL
+            # feeds ffplay.
+            with_audio = self.config.trailer_audio and audio_available()
+            play(
+                stream_url,
+                lambda frame: self.call_from_thread(pane.show_frame, frame),
+                cols,
+                rows,
+                braille_art,
+                stop=stop,
+                audio_url=stream_url if with_audio else None,
+            )
+        except TrailerError as exc:
+            self.call_from_thread(pane.show_message, str(exc), "red")
+            return
+        finally:
+            stop.set()
+        self.call_from_thread(pane.show_message, _("trailer_ended"))
 
     def action_trailer(self) -> None:
         trailer = self._current.trailer if self._current else None

@@ -30,6 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="serve everything from cache; never touch the network",
     )
     parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="report what is installed and configured, then exit",
+    )
+    parser.add_argument(
         "--purge-cache",
         action="store_true",
         help="clear cached API responses and posters, then exit",
@@ -52,6 +57,26 @@ def main(argv: list[str] | None = None) -> int:
         with Cache(config.cache_dir, config.cache_ttl) as cache:
             cache.purge()
         print(f"Cleared cache at {config.cache_dir}")
+        return 0
+
+    if args.doctor:
+        from player import audio_available, missing_tools
+
+        print(f"cache dir     : {config.cache_dir}")
+        print(f"region        : {config.region}")
+        print(f"language      : {config.language} (ui: {config.ui_language})")
+        print(f"poster        : {config.poster_protocol} @ {config.poster_size}")
+        print(f"offline       : {config.offline}")
+        print(f"omdb ratings  : {'yes' if config.has_omdb else 'no key'}")
+        missing = missing_tools()
+        print(f"trailer video : {'ready' if not missing else 'needs ' + ', '.join(missing)}")
+        print(f"trailer audio : {'ready' if audio_available() else 'needs ffmpeg (ffplay)'}")
+        try:
+            import av
+
+            print(f"pyav          : {av.__version__}")
+        except ImportError as exc:
+            print(f"pyav          : NOT AVAILABLE ({exc})")
         return 0
 
     if args.widget:

@@ -60,7 +60,7 @@ browse trending series, search across both at once, or look someone up and
 open their filmography. Series get their own detail layout: creator, season
 and episode counts, and the TV content rating in place of budget and revenue.
 
-The right-hand pane carries five tabs, cycled with `f2`:
+The right-hand pane carries six tabs, cycled with `f2`:
 
 | Tab | Contents |
 | --- | -------- |
@@ -69,6 +69,7 @@ The right-hand pane carries five tabs, cycled with `f2`:
 | **Cast** | Billed roles — pick one to browse that person's filmography |
 | **Episodes** | Season picker, a braille chart of episode ratings, then the episode list. Series only |
 | **Stats** | Your watch history: hours, top genres, decades, recent titles |
+| **Trailer** | The trailer played as braille art, in the terminal |
 
 ## Keys
 
@@ -83,6 +84,7 @@ The right-hand pane carries five tabs, cycled with `f2`:
 | `f2` | cycle the right-hand tabs |
 | `f3` | reload the list with recommendations for this title |
 | `f4` | play the trailer in your browser |
+| `f7` | play the trailer **in the terminal** (press again to stop) |
 | `f5` | open the IMDb or TMDB page |
 | `ctrl+d` | add to / remove from the watchlist |
 | `f6` | mark watched / unmark |
@@ -165,6 +167,36 @@ This is a desktop widget, not a panel in the Windows 11 Widgets Board. That
 board only accepts MSIX-packaged apps implementing the `IWidgetProvider` COM
 interface through the Windows App SDK, which a Python project cannot provide.
 
+## Playing trailers in the terminal
+
+`f7` plays the selected title's trailer as braille art in the Trailer tab;
+pressing it again stops. `f4` still opens it in a browser, which is what you
+want to actually watch something.
+
+It needs two extra tools, both optional to the rest of the app:
+
+```bash
+pip install -U yt-dlp av
+```
+
+yt-dlp resolves the YouTube trailer to a stream URL and PyAV decodes it. If
+either is missing the tab says so instead of failing.
+
+**Sound plays too.** The terminal only renders the picture, so the audio
+track is handed to `ffplay` (part of ffmpeg) which plays it with no window.
+Both halves are paced against the wall clock, so they stay together; the
+residual offset is ffplay's own startup latency. Set
+`COLOMBUS_TRAILER_AUDIO=0` for silent playback, and note that without ffmpeg
+installed you simply get no sound rather than an error.
+
+Set your expectations: the grid is capped at 60x20 cells, so you are watching
+roughly 120x80 pixels. Rendering is the bottleneck - about 56fps at 50x16 but
+only 10fps at 100x32 - so playback keeps real time by **dropping frames**
+rather than running in slow motion.
+
+If playback fails with a yt-dlp error, update it: `pip install -U yt-dlp`.
+YouTube's bot checks break older builds regularly.
+
 ## Posters
 
 `COLOMBUS_POSTER_PROTOCOL` picks how posters are drawn:
@@ -212,6 +244,7 @@ For the packaged `.exe`, a `.env` beside the executable is picked up too.
 | `COLOMBUS_CACHE_DIR` | `~/.cache/colombus` | cache, watchlist and watch history |
 | `COLOMBUS_CACHE_TTL` | `604800` (7 days) | cache lifetime in seconds; `0` never expires |
 | `COLOMBUS_OFFLINE` | unset | `1` to serve only what is cached |
+| `COLOMBUS_TRAILER_AUDIO` | `1` | `0` plays in-terminal trailers silently |
 | `COLOMBUS_REGION` | `US` | where-to-watch region |
 | `COLOMBUS_LANGUAGE` | `en-US` | language of TMDB content |
 | `COLOMBUS_UI_LANGUAGE` | `en` | language of the app's own labels |

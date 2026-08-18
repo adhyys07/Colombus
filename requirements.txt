@@ -4,3 +4,5 @@ rich>=13.7
 pillow>=10.0
 python-dotenv>=1.0
 textual-image>=0.6   # optional: Kitty TGP / Sixel posters
+av>=12.0             # optional: in-terminal trailer playback
+yt-dlp>=2025.1       # optional: resolves trailer streams for playback

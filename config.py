@@ -73,6 +73,7 @@ class Config:
     language: str = DEFAULT_LANGUAGE
     ui_language: str = DEFAULT_UI_LANGUAGE
     offline: bool = False
+    trailer_audio: bool = True
 
     @property
     def language_code(self) -> str:
@@ -133,4 +134,6 @@ class Config:
             .lower(),
             offline=(os.getenv("COLOMBUS_OFFLINE") or "").strip().lower()
             in ("1", "true", "yes", "on"),
+            trailer_audio=(os.getenv("COLOMBUS_TRAILER_AUDIO") or "1").strip().lower()
+            not in ("0", "false", "no", "off"),
         )

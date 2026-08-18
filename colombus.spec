@@ -2,7 +2,9 @@
 from PyInstaller.utils.hooks import collect_all
 
 datas, binaries, hiddenimports = [("app.tcss", ".")], [], []
-for pkg in ("textual", "textual_image", "rich"):
+# av ships compiled extensions plus bundled ffmpeg libraries; without
+# collecting them the Trailer tab would fail only at runtime.
+for pkg in ("textual", "textual_image", "rich", "av"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b
@@ -27,6 +29,8 @@ hiddenimports += [
     "widgets.stats",
     "widgets.artposter",
     "widget",
+    "player",
+    "widgets.player",
     "i18n",
 ]
 
