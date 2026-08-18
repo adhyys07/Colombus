@@ -8,7 +8,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
-from models import SearchHit
+from models import SearchHit, WatchedEntry
 
 
 _SCHEMA = """
@@ -27,6 +27,22 @@ CREATE TABLE IF NOT EXISTS watchlist (
     poster_path TEXT,
     added REAL NOT NULL,
     PRIMARY KEY (tmdb_id, media_type)
+);
+CREATE TABLE IF NOT EXISTS watched (
+    tmdb_id INTEGER NOT NULL,
+    media_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    year TEXT NOT NULL DEFAULT '',
+    runtime INTEGER NOT NULL DEFAULT 0,
+    genres TEXT NOT NULL DEFAULT '',
+    watched_at REAL NOT NULL,
+    PRIMARY KEY (tmdb_id, media_type)
+);
+CREATE TABLE IF NOT EXISTS series_state (
+    tmdb_id INTEGER PRIMARY KEY,
+    episodes INTEGER NOT NULL DEFAULT 0,
+    seasons INTEGER NOT NULL DEFAULT 0,
+    checked_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS history (
     query TEXT NOT NULL,
@@ -59,7 +75,7 @@ class Cache:
     def _expired(self, ts: float) -> bool:
         return bool(self.ttl) and (time.time() - ts) > self.ttl
 
-    def get_json(self, key: str) -> Any | None:
+    def get_json(self, key: str, ignore_ttl: bool = False) -> Any | None:
         with self._lock:
             row = self._db.execute(
                 "SELECT value, ts FROM kv WHERE key = ?", (key,)
@@ -67,7 +83,9 @@ class Cache:
         if row is None:
             return None
         value, ts = row
-        if self._expired(ts):
+        # Offline, an expired entry beats nothing: there is no network to
+        # refresh it from.
+        if not ignore_ttl and self._expired(ts):
             self.delete(key)
             return None
         try:
@@ -135,6 +153,69 @@ class Cache:
             for row in rows
         ]
 
+    def watched_add(self, entry: WatchedEntry) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO watched (tmdb_id, media_type, title, "
+                "year, runtime, genres, watched_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (entry.tmdb_id, entry.media_type, entry.title, entry.year,
+                 entry.runtime, "|".join(entry.genres), time.time()),
+            )
+
+    def watched_remove(self, tmdb_id: int, media_type: str) -> None:
+        with self._lock:
+            self._db.execute(
+                "DELETE FROM watched WHERE tmdb_id = ? AND media_type = ?",
+                (tmdb_id, media_type),
+            )
+
+    def watched_has(self, tmdb_id: int, media_type: str) -> bool:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT 1 FROM watched WHERE tmdb_id = ? AND media_type = ?",
+                (tmdb_id, media_type),
+            ).fetchone()
+        return row is not None
+
+    def watched_toggle(self, entry: WatchedEntry) -> bool:
+        """Returns True if the title is now marked watched."""
+        if self.watched_has(entry.tmdb_id, entry.media_type):
+            self.watched_remove(entry.tmdb_id, entry.media_type)
+            return False
+        self.watched_add(entry)
+        return True
+
+    def watched_all(self) -> list[WatchedEntry]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT tmdb_id, media_type, title, year, runtime, genres, "
+                "watched_at FROM watched ORDER BY watched_at DESC"
+            ).fetchall()
+        return [
+            WatchedEntry(
+                tmdb_id=r[0], media_type=r[1], title=r[2], year=r[3],
+                runtime=r[4], genres=[g for g in r[5].split("|") if g],
+                watched_at=r[6],
+            )
+            for r in rows
+        ]
+
+    def series_state(self, tmdb_id: int) -> tuple[int, int] | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT episodes, seasons FROM series_state WHERE tmdb_id = ?",
+                (tmdb_id,),
+            ).fetchone()
+        return (row[0], row[1]) if row else None
+
+    def series_state_set(self, tmdb_id: int, episodes: int, seasons: int) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO series_state "
+                "(tmdb_id, episodes, seasons, checked_at) VALUES (?, ?, ?, ?)",
+                (tmdb_id, episodes, seasons, time.time()),
+            )
+
     def history_add(self, query: str, media_type: str) -> None:
         query = query.strip()
         if not query:
@@ -168,10 +249,10 @@ class Cache:
         digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
         return self.blobs / f"{digest}.img"
 
-    def get_blob(self, key: str) -> bytes | None:
+    def get_blob(self, key: str, ignore_ttl: bool = False) -> bytes | None:
         path = self._blob_path(key)
         try:
-            if self._expired(path.stat().st_mtime):
+            if not ignore_ttl and self._expired(path.stat().st_mtime):
                 path.unlink(missing_ok=True)
                 return None
             return path.read_bytes()
@@ -194,8 +275,8 @@ class Cache:
     def purge(self) -> None:
         """Clears cached API responses and posters.
 
-        Deliberately leaves `watchlist` and `history` alone - those are the
-        user's own data, not a cache.
+        Deliberately leaves `watchlist`, `watched`, `series_state` and
+        `history` alone - those are the user's own data, not a cache.
         """
         with self._lock:
             self._db.execute("DELETE FROM kv")

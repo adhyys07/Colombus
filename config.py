@@ -72,6 +72,7 @@ class Config:
     region: str = DEFAULT_REGION
     language: str = DEFAULT_LANGUAGE
     ui_language: str = DEFAULT_UI_LANGUAGE
+    offline: bool = False
 
     @property
     def language_code(self) -> str:
@@ -130,4 +131,6 @@ class Config:
             ui_language=(os.getenv("COLOMBUS_UI_LANGUAGE") or DEFAULT_UI_LANGUAGE)
             .strip()
             .lower(),
+            offline=(os.getenv("COLOMBUS_OFFLINE") or "").strip().lower()
+            in ("1", "true", "yes", "on"),
         )

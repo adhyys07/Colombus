@@ -28,8 +28,11 @@ class OMDBSource:
             return None
 
         cache_key = f"omdb:{imdb_id}"
-        if (cached := self._cache.get_json(cache_key)) is not None:
+        cached = self._cache.get_json(cache_key, ignore_ttl=self._config.offline)
+        if cached is not None:
             return cached
+        if self._config.offline:
+            return None  # extra ratings are optional; never block on them
 
         try:
             response = await self._client.get(

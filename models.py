@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
+from typing import ClassVar
 
 
 MOVIE = "movie"
 TV = "tv"
+PERSON = "person"
 
 
 @dataclass
@@ -128,6 +131,123 @@ class Season:
     number: int
     name: str = ""
     episodes: list[Episode] = field(default_factory=list)
+
+
+@dataclass
+class Filters:
+    """Discover-time filters for the Categories section."""
+
+    sort_by: str = "popularity.desc"
+    min_rating: float = 0.0
+    year_from: int | None = None
+    year_to: int | None = None
+
+    # Sorting by rating with no vote floor surfaces obscure titles carrying a
+    # single 10/10 vote, so the two always travel together.
+    MIN_VOTES_FOR_RATING_SORT: ClassVar[int] = 200
+    MIN_VOTES_FOR_RATING_FILTER: ClassVar[int] = 50
+
+    def as_params(self, media_type: str) -> dict[str, str]:
+        sort_by = self.sort_by
+        # TMDB rejects primary_release_date sorting for series.
+        if media_type == TV and sort_by.startswith("primary_release_date"):
+            sort_by = "first_air_date" + sort_by[len("primary_release_date"):]
+        params: dict[str, str] = {"sort_by": sort_by}
+
+        if sort_by.startswith("vote_average"):
+            params["vote_count.gte"] = str(self.MIN_VOTES_FOR_RATING_SORT)
+        if self.min_rating:
+            params["vote_average.gte"] = f"{self.min_rating:g}"
+            params.setdefault(
+                "vote_count.gte", str(self.MIN_VOTES_FOR_RATING_FILTER)
+            )
+
+        # Series date themselves with first_air_date; sending the movie key
+        # is silently ignored, which reads as "the filter does nothing".
+        date_key = "first_air_date" if media_type == TV else "primary_release_date"
+        if self.year_from:
+            params[f"{date_key}.gte"] = f"{self.year_from}-01-01"
+        if self.year_to:
+            params[f"{date_key}.lte"] = f"{self.year_to}-12-31"
+        return params
+
+    @property
+    def is_default(self) -> bool:
+        return (
+            self.sort_by == "popularity.desc"
+            and not self.min_rating
+            and not self.year_from
+            and not self.year_to
+        )
+
+    def summary(self) -> str:
+        """Short human description, for showing which filters are live."""
+        if self.is_default:
+            return ""
+        bits = []
+        if self.sort_by != "popularity.desc":
+            bits.append(self.sort_by.split(".")[0].replace("_", " "))
+        if self.min_rating:
+            bits.append(f"{self.min_rating:g}+")
+        if self.year_from:
+            bits.append(f"{self.year_from}s")
+        return " · ".join(bits)
+
+
+@dataclass
+class WatchedEntry:
+    """A title you marked seen.
+
+    Runtime and genres are copied in at mark time so stats keep working
+    offline and survive a cache purge.
+    """
+
+    tmdb_id: int
+    media_type: str
+    title: str
+    year: str = ""
+    runtime: int = 0
+    genres: list[str] = field(default_factory=list)
+    watched_at: float = 0.0
+
+    @property
+    def date(self) -> str:
+        if not self.watched_at:
+            return ""
+        return datetime.fromtimestamp(self.watched_at).strftime("%Y-%m-%d")
+
+    @property
+    def decade(self) -> str:
+        return f"{self.year[:3]}0s" if len(self.year) == 4 else "unknown"
+
+
+@dataclass
+class SeriesUpdate:
+    hit: SearchHit
+    old_episodes: int
+    new_episodes: int
+
+    @property
+    def added(self) -> int:
+        return max(0, self.new_episodes - self.old_episodes)
+
+
+@dataclass
+class Stats:
+    films: int = 0
+    series: int = 0
+    minutes: int = 0
+    genres: list[tuple[str, int]] = field(default_factory=list)
+    decades: list[tuple[str, int]] = field(default_factory=list)
+    recent: list[WatchedEntry] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return self.films + self.series
+
+    @property
+    def hours(self) -> float:
+        return self.minutes / 60
 
 
 @dataclass

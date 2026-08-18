@@ -7,6 +7,8 @@ from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from models import Movie
+from rich.console import RenderableType
+
 from render import message_renderable, movie_renderable
 
 
@@ -22,6 +24,11 @@ class DetailPane(VerticalScroll):
 
     def show_movie(self, movie: Movie) -> None:
         self._body.update(movie_renderable(movie))
+        self.scroll_home(animate=False)
+
+    def show_renderable(self, renderable: RenderableType) -> None:
+        """For views that are not a single title, such as watch stats."""
+        self._body.update(renderable)
         self.scroll_home(animate=False)
 
     def show_message(self, text: str, style: str = "dim") -> None:

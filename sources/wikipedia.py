@@ -16,7 +16,10 @@ class WikipediaSource:
     API = "https://en.wikipedia.org/w/api.php"
     SUMMARY = "https://en.wikipedia.org/api/rest_v1/page/summary/"
 
-    def __init__(self, cache: Cache, client: httpx.AsyncClient) -> None:
+    def __init__(
+        self, cache: Cache, client: httpx.AsyncClient, offline: bool = False
+    ) -> None:
+        self._offline = offline
         self._cache = cache
         self._client = client
 
@@ -62,7 +65,8 @@ class WikipediaSource:
 
         kind = "tv" if series else "movie"
         cache_key = f"wiki:{kind}:{title.lower()}:{year}"
-        if (cached := self._cache.get_json(cache_key)) is not None:
+        cached = self._cache.get_json(cache_key, ignore_ttl=self._offline)
+        if cached is not None:
             return cached.get("extract", ""), cached.get("url", "")
 
         page = await self._find_page(title, year, series)

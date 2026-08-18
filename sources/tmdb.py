@@ -10,7 +10,7 @@ import httpx
 
 from cache import Cache
 from config import Config
-from models import MOVIE, TV, Genre, SearchHit
+from models import MOVIE, TV, Filters, Genre, Person, SearchHit
 
 WINDOWS = ("day", "week")
 
@@ -31,6 +31,11 @@ def _row_title(row: dict) -> str:
 
 def _row_year(row: dict) -> str:
     return (row.get("release_date") or row.get("first_air_date") or "")[:4]
+
+
+# Talk shows, news and reality dominate an actor's credits by popularity
+# while telling you nothing about their work.
+CHAT_GENRES = {10767, 10763, 10764}
 
 
 class TMDBSource:
@@ -68,9 +73,17 @@ class TMDBSource:
         # language would serve whatever was fetched first.
         if cache_key:
             cache_key = f"{cache_key}:{lang}"
-            cached = self._cache.get_json(cache_key)
+            cached = self._cache.get_json(
+                cache_key, ignore_ttl=self._config.offline
+            )
             if cached is not None:
                 return cached
+
+        if self._config.offline:
+            raise TMDBError(
+                "Offline mode: this request is not in the cache.\n"
+                "Run once without --offline to fetch it."
+            )
 
         headers, auth_params = self._auth()
         try:
@@ -178,24 +191,51 @@ class TMDBSource:
         media_type: str,
         genre_id: int | None = None,
         original_language: str = "",
+        filters: Filters | None = None,
         limit: int = 30,
     ) -> list[SearchHit]:
         if media_type not in (MOVIE, TV):
             media_type = MOVIE
-        params = {"sort_by": "popularity.desc"}
+        params = (filters or Filters()).as_params(media_type)
         if genre_id:
             params["with_genres"] = str(genre_id)
         if original_language:
             params["with_original_language"] = original_language
+        # Every filter combination needs its own cache entry, or the first
+        # one fetched would shadow the rest.
+        signature = "-".join(f"{k}={v}" for k, v in sorted(params.items()))
         data = await self._get(
             f"/discover/{media_type}",
             params,
-            cache_key=(
-                f"tmdb:discover:{media_type}:"
-                f"{genre_id or 'any'}:{original_language or 'any'}"
-            ),
+            cache_key=f"tmdb:discover:{media_type}:{genre_id or 'any'}:{signature}",
         )
         return self._hits(data, media_type, limit)
+
+    async def search_people(self, query: str, limit: int = 30) -> list[Person]:
+        query = query.strip()
+        if not query:
+            return []
+        data = await self._get(
+            "/search/person",
+            {"query": query, "include_adult": "false"},
+            cache_key=f"tmdb:people:{query.lower()}",
+        )
+        people: list[Person] = []
+        for row in (data.get("results") or [])[:limit]:
+            if not (row.get("id") and row.get("name")):
+                continue
+            known = [
+                k.get("title") or k.get("name")
+                for k in (row.get("known_for") or [])[:2]
+            ]
+            people.append(
+                Person(
+                    tmdb_id=row["id"],
+                    name=row["name"],
+                    role=", ".join(x for x in known if x),
+                )
+            )
+        return people
 
     async def person_credits(self, person_id: int, limit: int = 40) -> list[SearchHit]:
         data = await self._get(
@@ -205,6 +245,8 @@ class TMDBSource:
         rows = list(data.get("cast") or []) + list(data.get("crew") or [])
         deduped: dict[tuple[int, str], dict] = {}
         for row in rows:
+            if CHAT_GENRES & set(row.get("genre_ids") or ()):
+                continue
             key = (row.get("id"), row.get("media_type"))
             if key[0] is not None and key not in deduped:
                 deduped[key] = row

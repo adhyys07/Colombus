@@ -24,6 +24,7 @@ hiddenimports += [
     "widgets.reviews",
     "widgets.cast",
     "widgets.episodes",
+    "widgets.stats",
     "widgets.artposter",
     "widget",
     "i18n",

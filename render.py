@@ -9,11 +9,15 @@ from rich.table import Table
 from rich.text import Text
 
 from i18n import _
-from models import Movie, Rating, Season
+from models import Movie, Rating, Season, Stats
 
 BAR_WIDTH = 24
 MAX_REVIEWS = 3
 DASH = "—"
+BLOCKS = "▁▂▃▄▅▆▇█"
+BRAILLE_BASE = 0x2800
+# dot bit per (column, row) inside a 2x4 braille cell
+DOTS = ((0x01, 0x02, 0x04, 0x40), (0x08, 0x10, 0x20, 0x80))
 
 
 def _money(amount: int) -> str:
@@ -54,6 +58,63 @@ def rating_bar(rating: Rating, width: int = BAR_WIDTH) -> Text:
     line.append("░" * (width - filled), style="dim")
     line.append(f" {rating.value:>8}", style=style)
     return line
+
+
+def sparkline(values: list[float], lo: float = 0.0, hi: float = 10.0) -> Text:
+    """One block per value, coloured by score band. Works in any font."""
+    line = Text()
+    span = hi - lo
+    for value in values:
+        index = round((value - lo) / span * (len(BLOCKS) - 1)) if span > 0 else 0
+        index = max(0, min(len(BLOCKS) - 1, index))
+        line.append(BLOCKS[index], style=_score_style(value * 10))
+    return line
+
+
+def braille_chart(
+    values: list[float], cols: int = 40, rows: int = 4,
+    lo: float = 0.0, hi: float = 10.0,
+) -> Text:
+    """A line plot at 2x4 dots per cell - four times the horizontal
+    resolution of a block sparkline in the same width."""
+    if not values:
+        return Text()
+    width, height = cols * 2, rows * 4
+    grid = [[0] * cols for _ in range(rows)]
+    span = hi - lo
+
+    for x in range(width):
+        position = x / max(1, width - 1) * (len(values) - 1)
+        left = int(position)
+        right = min(left + 1, len(values) - 1)
+        value = values[left] + (values[right] - values[left]) * (position - left)
+        ratio = (value - lo) / span if span > 0 else 0.5
+        y = height - 1 - max(0, min(height - 1, round(ratio * (height - 1))))
+        grid[y // 4][x // 2] |= DOTS[x % 2][y % 4]
+
+    out = Text()
+    for index, row in enumerate(grid):
+        out.append("".join(chr(BRAILLE_BASE + bits) for bits in row))
+        if index < len(grid) - 1:
+            out.append(chr(10))
+    return out
+
+
+def season_chart(season: Season) -> RenderableType | None:
+    """Episode ratings across a season. None when there is nothing to plot."""
+    scores = [e.vote_average for e in season.episodes if e.vote_average]
+    if len(scores) < 2:
+        return None
+    low, high = min(scores), max(scores)
+    # A flat season would otherwise draw a line along the very edge.
+    pad = max(0.3, (high - low) * 0.15)
+    chart = braille_chart(
+        scores, cols=min(46, max(8, len(scores) * 2)), rows=3,
+        lo=low - pad, hi=high + pad,
+    )
+    header = Text(f"{high:.1f} high  ", style="dim")
+    footer = Text(f"{low:.1f} low   E1-E{len(season.episodes)}", style="dim")
+    return Group(header, chart, footer)
 
 
 def facts_table(movie: Movie) -> Table:
@@ -189,7 +250,51 @@ def episodes_renderable(season: Season) -> RenderableType:
 
     header = Text(season.name, style="bold")
     header.append(f"  {len(season.episodes)} {_('episodes').lower()}", style="dim")
-    return Group(header, Rule(style="dim"), table)
+
+    parts: list[RenderableType] = [header, Rule(style="dim")]
+    if chart := season_chart(season):
+        parts += [chart, Rule(style="dim")]
+    parts.append(table)
+    return Group(*parts)
+
+
+def _count_bars(pairs: list[tuple[str, int]]) -> Table:
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold cyan", justify="right", no_wrap=True)
+    table.add_column(ratio=1)
+    peak = max((count for _, count in pairs), default=1) or 1
+    for label, count in pairs:
+        filled = round(count / peak * BAR_WIDTH)
+        bar = Text("█" * filled, style="green")
+        bar.append("░" * (BAR_WIDTH - filled), style="dim")
+        bar.append(f"  {count}", style="dim")
+        table.add_row(label, bar)
+    return table
+
+
+def stats_renderable(stats: Stats) -> RenderableType:
+    if not stats.total:
+        return message_renderable(_("nothing_watched"))
+
+    head = Text(_("titles_watched", count=stats.total), style="bold")
+    head.append(
+        f"\n{stats.films} {_('movies').lower()} · {stats.series} "
+        f"{_('series').lower()} · {stats.hours:.0f} {_('hours')}",
+        style="dim",
+    )
+    parts: list[RenderableType] = [head, Rule(style="dim")]
+    if stats.genres:
+        parts += [Rule(_("genre"), style="dim"), _count_bars(stats.genres)]
+    if stats.decades:
+        parts += [Rule(_("decades"), style="dim"), _count_bars(stats.decades)]
+    if stats.recent:
+        recent = Table.grid(padding=(0, 2))
+        recent.add_column(style="dim", no_wrap=True)
+        recent.add_column(ratio=1)
+        for entry in stats.recent:
+            recent.add_row(entry.date, entry.title)
+        parts += [Rule(_("recently_watched"), style="dim"), recent]
+    return Group(*parts)
 
 
 def message_renderable(text: str, style: str = "dim") -> RenderableType:

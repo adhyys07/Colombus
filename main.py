@@ -25,6 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="make the widget show series instead of films",
     )
     parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="serve everything from cache; never touch the network",
+    )
+    parser.add_argument(
         "--purge-cache",
         action="store_true",
         help="clear cached API responses and posters, then exit",

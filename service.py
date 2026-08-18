@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 
 import httpx
 
@@ -12,6 +13,7 @@ from models import (
     MOVIE,
     TV,
     Episode,
+    Filters,
     Genre,
     Movie,
     Person,
@@ -20,6 +22,9 @@ from models import (
     Review,
     Season,
     SearchHit,
+    SeriesUpdate,
+    Stats,
+    WatchedEntry,
     Video,
 )
 from sources import OMDBSource, TMDBError, TMDBSource, WikipediaSource
@@ -48,7 +53,7 @@ class MovieService:
         )
         self.tmdb = TMDBSource(config, self.cache, self._client)
         self.omdb = OMDBSource(config, self.cache, self._client)
-        self.wiki = WikipediaSource(self.cache, self._client)
+        self.wiki = WikipediaSource(self.cache, self._client, config.offline)
 
     async def __aenter__(self) -> MovieService:
         return self
@@ -77,9 +82,18 @@ class MovieService:
         return await self.tmdb.genres(media_type)
 
     async def by_genre(
-        self, media_type: str, genre_id: int | None, original_language: str = ""
+        self,
+        media_type: str,
+        genre_id: int | None,
+        original_language: str = "",
+        filters: Filters | None = None,
     ) -> list[SearchHit]:
-        return await self.tmdb.discover(media_type, genre_id, original_language)
+        return await self.tmdb.discover(
+            media_type, genre_id, original_language, filters
+        )
+
+    async def search_people(self, query: str) -> list[Person]:
+        return await self.tmdb.search_people(query)
 
     async def person_titles(self, person_id: int) -> list[SearchHit]:
         return await self.tmdb.person_credits(person_id)
@@ -112,6 +126,102 @@ class MovieService:
 
     def watchlist_has(self, tmdb_id: int, media_type: str) -> bool:
         return self.cache.watchlist_has(tmdb_id, media_type)
+
+    # ------------------------------------------------------------- watched
+
+    async def _total_runtime(self, movie: Movie) -> int:
+        """Total minutes for a title.
+
+        TMDB increasingly returns an empty episode_run_time, so for series
+        the per-episode length is averaged from the first season's real
+        episode runtimes and multiplied out. That makes it an estimate.
+        """
+        per_episode = movie.runtime or 0
+        if not movie.is_series:
+            return per_episode
+
+        if not per_episode and movie.season_numbers:
+            try:
+                season = await self.season(movie.tmdb_id, movie.season_numbers[0])
+            except TMDBError:
+                return 0
+            lengths = [e.runtime for e in season.episodes if e.runtime]
+            per_episode = round(sum(lengths) / len(lengths)) if lengths else 0
+        return per_episode * (movie.episodes or 0)
+
+    async def watched_toggle(self, movie: Movie) -> bool:
+        if self.cache.watched_has(movie.tmdb_id, movie.media_type):
+            self.cache.watched_remove(movie.tmdb_id, movie.media_type)
+            return False
+        self.cache.watched_add(
+            WatchedEntry(
+                tmdb_id=movie.tmdb_id,
+                media_type=movie.media_type,
+                title=movie.title,
+                year=movie.year,
+                runtime=await self._total_runtime(movie),
+                genres=list(movie.genres),
+            )
+        )
+        return True
+
+    def watched_has(self, tmdb_id: int, media_type: str) -> bool:
+        return self.cache.watched_has(tmdb_id, media_type)
+
+    def watched(self) -> list[SearchHit]:
+        return [
+            SearchHit(
+                tmdb_id=e.tmdb_id, title=e.title, year=e.year, overview="",
+                poster_path=None, media_type=e.media_type,
+            )
+            for e in self.cache.watched_all()
+        ]
+
+    def stats(self) -> Stats:
+        entries = self.cache.watched_all()
+        genres: Counter[str] = Counter()
+        decades: Counter[str] = Counter()
+        minutes = films = series = 0
+        for entry in entries:
+            minutes += entry.runtime
+            genres.update(entry.genres)
+            decades[entry.decade] += 1
+            if entry.media_type == TV:
+                series += 1
+            else:
+                films += 1
+        return Stats(
+            films=films,
+            series=series,
+            minutes=minutes,
+            genres=genres.most_common(8),
+            decades=sorted(decades.items(), reverse=True),
+            recent=entries[:10],
+        )
+
+    # ------------------------------------------------- new-episode alerts
+
+    async def series_updates(self) -> list[SeriesUpdate]:
+        """Compares stored episode counts for watchlisted series against
+        fresh ones.
+
+        The first sighting records a baseline without alerting, so you only
+        hear about episodes added after you started tracking.
+        """
+        updates: list[SeriesUpdate] = []
+        for hit in self.cache.watchlist_all():
+            if hit.media_type != TV:
+                continue
+            try:
+                movie = await self.details(hit.tmdb_id, TV)
+            except TMDBError:
+                continue  # offline, or the id went away
+            fresh = movie.episodes or 0
+            previous = self.cache.series_state(hit.tmdb_id)
+            self.cache.series_state_set(hit.tmdb_id, fresh, movie.seasons or 0)
+            if previous and fresh > previous[0]:
+                updates.append(SeriesUpdate(hit, previous[0], fresh))
+        return updates
 
     def remember_search(self, query: str, media_type: str) -> None:
         self.cache.history_add(query, media_type)

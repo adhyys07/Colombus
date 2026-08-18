@@ -5,7 +5,7 @@ from __future__ import annotations
 from rich.text import Text
 from textual.widgets import Label, ListItem, ListView
 
-from models import SearchHit
+from models import Person, SearchHit
 
 
 class ResultItem(ListItem):
@@ -35,6 +35,17 @@ class QueryItem(ListItem):
         self.query = query
 
 
+class PersonResult(ListItem):
+    """A person from search; selecting one browses their filmography."""
+
+    def __init__(self, person: Person) -> None:
+        label = Text(person.name, style="bold")
+        if person.role:
+            label.append(f"\n  {person.role}", style="dim")
+        super().__init__(Label(label))
+        self.person = person
+
+
 class ResultsList(ListView):
     BORDER_TITLE = "Results"
 
@@ -43,6 +54,13 @@ class ResultsList(ListView):
         for hit in hits:
             await self.append(ResultItem(hit))
         if hits:
+            self.index = 0
+
+    async def show_people(self, people: list[Person]) -> None:
+        await self.clear()
+        for person in people:
+            await self.append(PersonResult(person))
+        if people:
             self.index = 0
 
     async def show_queries(self, queries: list[str]) -> None:

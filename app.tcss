@@ -92,3 +92,19 @@ Screen {
 #episodes #season {
     margin-bottom: 1;
 }
+
+#filters {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#filters Select {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#stats {
+    height: 1fr;
+    padding: 0 1;
+    background: $panel;
+}

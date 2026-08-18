@@ -5,7 +5,8 @@ from widgets.episodes import EpisodesPane
 
 from widgets.detail import DetailPane
 from widgets.poster import PosterPane
-from widgets.results import QueryItem, ResultItem, ResultsList
+from widgets.stats import StatsPane
+from widgets.results import PersonResult, QueryItem, ResultItem, ResultsList
 from widgets.reviews import ReviewsPane
 
 __all__ = [
@@ -13,9 +14,11 @@ __all__ = [
     "DetailPane",
     "EpisodesPane",
     "PersonItem",
+    "PersonResult",
     "QueryItem",
     "PosterPane",
     "ResultItem",
     "ResultsList",
     "ReviewsPane",
+    "StatsPane",
 ]

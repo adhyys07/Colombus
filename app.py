@@ -22,22 +22,56 @@ from textual.widgets import (
 
 from config import Config
 from i18n import _
-from models import MOVIE, TV, Movie, SearchHit
+from models import MOVIE, PERSON, TV, Filters, Movie, SearchHit
 from service import MovieService
 from sources import TMDBError
-from widgets import CastPane, DetailPane, EpisodesPane, PosterPane, ResultsList, ReviewsPane
+from widgets import (
+    CastPane,
+    DetailPane,
+    EpisodesPane,
+    PersonItem,
+    PersonResult,
+    PosterPane,
+    QueryItem,
+    ResultsList,
+    ReviewsPane,
+    StatsPane,
+)
 
 SEARCH_TAB = "tab-search"
 TRENDING_TAB = "tab-trending"
 CATEGORIES_TAB = "tab-categories"
 WATCHLIST_TAB = "tab-watchlist"
+WATCHED_TAB = "tab-watched"
 
 DETAILS_PANE = "pane-details"
 REVIEWS_PANE = "pane-reviews"
 CAST_PANE = "pane-cast"
 EPISODES_PANE = "pane-episodes"
+STATS_PANE = "pane-stats"
 
-MEDIA_OPTIONS = [(_("movies"), MOVIE), (_("series"), TV), (_("both"), "all")]
+MEDIA_OPTIONS = [
+    (_("movies"), MOVIE),
+    (_("series"), TV),
+    (_("both"), "all"),
+    (_("people"), PERSON),
+]
+# Each label reads on its own, so a closed dropdown still says what it is.
+SORT_OPTIONS = [
+    (_("sort_popular"), "popularity.desc"),
+    (_("sort_rated"), "vote_average.desc"),
+    (_("sort_newest"), "primary_release_date.desc"),
+    (_("sort_grossing"), "revenue.desc"),
+]
+RATING_OPTIONS = [
+    (_("any_rating"), 0.0),
+    ("6.0+", 6.0),
+    ("7.0+", 7.0),
+    ("8.0+", 8.0),
+]
+DECADE_OPTIONS = [(_("any_year"), 0)] + [
+    (f"{decade}s", decade) for decade in range(2020, 1949, -10)
+]
 WINDOW_OPTIONS = [(_("this_week"), "week"), (_("today"), "day")]
 LANGUAGE_OPTIONS = [
     (_("any_language"), ""), ("English", "en"), ("हिन्दी / Hindi", "hi"),
@@ -70,6 +104,8 @@ class ColombusApp(App[None]):
         ("f4", "trailer", _("trailer")),
         ("f5", "open_page", _("open_page")),
         ("ctrl+d", "toggle_watchlist", _("watchlist_toggle")),
+        ("ctrl+f", "toggle_filters", _("filters")),
+        ("f6", "toggle_watched", _("mark_watched")),
         ("ctrl+r", "purge_cache", _("clear_cache")),
         ("ctrl+q", "quit", _("quit")),
     ]
@@ -82,6 +118,7 @@ class ColombusApp(App[None]):
         self._warned_omdb = False
         self._section = SEARCH_TAB
         self._genres_loaded_for: tuple[str, str] | None = None
+        self._filters_open = False
         self._current: Movie | None = None
         self._current_hit: SearchHit | None = None
 
@@ -93,6 +130,7 @@ class ColombusApp(App[None]):
             Tab(_("trending"), id=TRENDING_TAB),
             Tab(_("categories"), id=CATEGORIES_TAB),
             Tab(_("watchlist"), id=WATCHLIST_TAB),
+            Tab(_("watched"), id=WATCHED_TAB),
             id="tabs",
         )
         with Horizontal(id="body"):
@@ -105,8 +143,21 @@ class ColombusApp(App[None]):
                         WINDOW_OPTIONS, value="week", allow_blank=False, id="window"
                     )
                     yield Select([], prompt=_("category_prompt"), id="genre")
+                with Horizontal(id="filters"):
                     yield Select(
                         LANGUAGE_OPTIONS, value="", allow_blank=False, id="language"
+                    )
+                    yield Select(
+                        SORT_OPTIONS,
+                        value="popularity.desc",
+                        allow_blank=False,
+                        id="sort",
+                    )
+                    yield Select(
+                        RATING_OPTIONS, value=0.0, allow_blank=False, id="min-rating"
+                    )
+                    yield Select(
+                        DECADE_OPTIONS, value=0, allow_blank=False, id="decade"
                     )
                 yield ResultsList(id="results")
             with Vertical(id="right"):
@@ -120,9 +171,13 @@ class ColombusApp(App[None]):
                         yield CastPane(id="cast")
                     with TabPane(_("episodes"), id=EPISODES_PANE):
                         yield EpisodesPane(id="episodes")
+                    with TabPane(_("stats"), id=STATS_PANE):
+                        yield StatsPane(id="stats")
         yield Footer()
 
     def on_mount(self) -> None:
+        if self.config.offline:
+            self.sub_title = f"{self.SUB_TITLE} - {_('offline')}"
         self._sync_controls()
         search = self.query_one("#search", Input)
         if self._initial_query:
@@ -130,6 +185,7 @@ class ColombusApp(App[None]):
             self.load_list()
         else:
             search.focus()
+        self.check_series_updates()
 
     async def on_unmount(self) -> None:
         await self._service.aclose()
@@ -147,11 +203,35 @@ class ColombusApp(App[None]):
         return MOVIE if media == "all" else media
 
     def _sync_controls(self) -> None:
-        """Only show the controls belonging to the active section."""
+        """Show only what the active section can act on.
+
+        The filter row stays hidden until ctrl+f, so the default view is
+        two dropdowns rather than six.
+        """
         self.query_one("#window", Select).display = self._section == TRENDING_TAB
         categories = self._section == CATEGORIES_TAB
         self.query_one("#genre", Select).display = categories
-        self.query_one("#language", Select).display = categories
+        self.query_one("#filters").display = categories and self._filters_open
+        self._sync_results_title()
+
+    def _sync_results_title(self) -> None:
+        """Name the live filters, since the row itself may be hidden."""
+        summary = (
+            self._discover_filters.summary() if self._section == CATEGORIES_TAB else ""
+        )
+        self.query_one(ResultsList).border_title = (
+            f"{_('results')} - {summary}" if summary else _("results")
+        )
+
+    @property
+    def _discover_filters(self) -> Filters:
+        decade = int(self.query_one("#decade", Select).value or 0)
+        return Filters(
+            sort_by=str(self.query_one("#sort", Select).value),
+            min_rating=float(self.query_one("#min-rating", Select).value or 0),
+            year_from=decade or None,
+            year_to=(decade + 9) if decade else None,
+        )
 
     # ------------------------------------------------------------------ workers
 
@@ -170,7 +250,11 @@ class ColombusApp(App[None]):
             elif self._section == CATEGORIES_TAB:
                 genre = self.query_one("#genre", Select).value
                 language = str(self.query_one("#language", Select).value or "")
-                if genre is Select.BLANK and not language:
+                if (
+                    genre is Select.BLANK
+                    and not language
+                    and self._discover_filters.is_default
+                ):
                     await self._show_nothing(_("pick_category"))
                     return
                 detail.show_message(_("loading_category"))
@@ -178,11 +262,16 @@ class ColombusApp(App[None]):
                     self._discover_media,
                     None if genre is Select.BLANK else int(genre),
                     language,
+                    self._discover_filters,
                 )
                 empty = _("nothing_in_category")
             elif self._section == WATCHLIST_TAB:
                 hits = self._service.watchlist()
                 empty = _("watchlist_empty")
+            elif self._section == WATCHED_TAB:
+                hits = self._service.watched()
+                self._refresh_stats()
+                empty = _("nothing_watched")
             else:
                 query = self.query_one("#search", Input).value.strip()
                 if not query:
@@ -194,6 +283,15 @@ class ColombusApp(App[None]):
                     )
                     return
                 detail.show_message(_("searching", query=query))
+                if media == PERSON:
+                    people = await self._service.search_people(query)
+                    self._service.remember_search(query, media)
+                    await results.show_people(people)
+                    if people:
+                        results.focus()
+                    else:
+                        detail.show_message(_("nothing_found", query=query))
+                    return
                 hits = await self._service.search(query, media)
                 self._service.remember_search(query, media)
                 empty = _("nothing_found", query=query)
@@ -313,8 +411,12 @@ class ColombusApp(App[None]):
             self.load_list()
 
     @on(Select.Changed, "#language")
-    def _on_language_changed(self) -> None:
+    @on(Select.Changed, "#sort")
+    @on(Select.Changed, "#min-rating")
+    @on(Select.Changed, "#decade")
+    def _on_filter_changed(self) -> None:
         if self._section == CATEGORIES_TAB:
+            self._sync_results_title()
             self.load_list()
 
     @on(Select.Changed, "#season")
@@ -330,14 +432,19 @@ class ColombusApp(App[None]):
     @on(ResultsList.Selected)
     def _on_result_selected(self, event: ResultsList.Selected) -> None:
         """Enter on a remembered search re-runs it."""
-        if query := getattr(event.item, "query", None):
-            self.query_one("#search", Input).value = query
+        # Type checks, not getattr: every Textual widget owns a .query()
+        # method, so duck-typing on the name matches every row.
+        item = event.item
+        if isinstance(item, QueryItem):
+            self.query_one("#search", Input).value = item.query
             self.load_list()
+        elif isinstance(item, PersonResult):
+            self.load_person(item.person.tmdb_id, item.person.name)
 
     @on(CastPane.Selected)
     def _on_person_selected(self, event: CastPane.Selected) -> None:
-        if person := getattr(event.item, "person", None):
-            self.load_person(person.tmdb_id, person.name)
+        if isinstance(event.item, PersonItem):
+            self.load_person(event.item.person.tmdb_id, event.item.person.name)
 
     # ------------------------------------------------------------------ actions
 
@@ -371,7 +478,7 @@ class ColombusApp(App[None]):
 
     def action_cycle_info(self) -> None:
         tabs = self.query_one("#info", TabbedContent)
-        order = [DETAILS_PANE, REVIEWS_PANE, CAST_PANE, EPISODES_PANE]
+        order = [DETAILS_PANE, REVIEWS_PANE, CAST_PANE, EPISODES_PANE, STATS_PANE]
         start = order.index(tabs.active) if tabs.active in order else 0
         for step in range(1, len(order) + 1):
             candidate = order[(start + step) % len(order)]
@@ -403,6 +510,44 @@ class ColombusApp(App[None]):
         if self._current:
             webbrowser.open(self._current.imdb_url or self._current.tmdb_url)
 
+    def _refresh_stats(self) -> None:
+        self.query_one(StatsPane).show_stats(self._service.stats())
+
+    def action_toggle_watched(self) -> None:
+        if self._current is not None:
+            self.mark_watched(self._current)
+
+    @work(exclusive=True, group="watched")
+    async def mark_watched(self, movie: Movie) -> None:
+        # Async because a series with no episode_run_time needs one
+        # season fetched to work out how long it actually is.
+        marked = await self._service.watched_toggle(movie)
+        self.notify(
+            _(
+                "watched_added" if marked else "watched_removed",
+                title=movie.title,
+            )
+        )
+        self._refresh_stats()
+        if self._section == WATCHED_TAB:
+            self.load_list()
+
+    @work(exclusive=True, group="updates")
+    async def check_series_updates(self) -> None:
+        """Runs once on mount; silent unless something actually grew."""
+        if self.config.offline:
+            return
+        try:
+            updates = await self._service.series_updates()
+        except Exception:
+            return  # a background nicety must never surface as an error
+        for update in updates:
+            self.notify(
+                _("new_episodes", title=update.hit.title, count=update.added),
+                title=_("watchlist"),
+                timeout=12,
+            )
+
     def action_toggle_watchlist(self) -> None:
         hit = self._current_hit
         if hit is None:
@@ -413,6 +558,17 @@ class ColombusApp(App[None]):
         )
         if self._section == WATCHLIST_TAB:
             self.load_list()
+
+    def action_toggle_filters(self) -> None:
+        """Filters sit behind one key so the default view stays clean."""
+        if self._section != CATEGORIES_TAB:
+            self._filters_open = True
+            self.query_one("#tabs", Tabs).active = CATEGORIES_TAB
+            return
+        self._filters_open = not self._filters_open
+        self._sync_controls()
+        if self._filters_open:
+            self.query_one("#sort", Select).focus()
 
     def action_focus_search(self) -> None:
         self.query_one("#search", Input).focus()
