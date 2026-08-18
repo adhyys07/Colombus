@@ -73,12 +73,37 @@ DECADE_OPTIONS = [(_("any_year"), 0)] + [
     (f"{decade}s", decade) for decade in range(2020, 1949, -10)
 ]
 WINDOW_OPTIONS = [(_("this_week"), "week"), (_("today"), "day")]
-LANGUAGE_OPTIONS = [
-    (_("any_language"), ""), ("English", "en"), ("हिन्दी / Hindi", "hi"),
-    ("தமிழ் / Tamil", "ta"), ("తెలుగు / Telugu", "te"), ("മലയാളം / Malayalam", "ml"),
-    ("ಕನ್ನಡ / Kannada", "kn"), ("বাংলা / Bengali", "bn"), ("मराठी / Marathi", "mr"),
-    ("ਪੰਜਾਬੀ / Punjabi", "pa"), ("日本語 / Japanese", "ja"), ("한국어 / Korean", "ko"),
-    ("Español", "es"), ("Français", "fr"), ("Deutsch", "de"), ("中文 / Mandarin", "zh"),
+# An industry is an origin country plus an original language: "IN" alone
+# returns Tamil and Malayalam films, so Bollywood has to be IN + hi.
+# Encoded "COUNTRY:LANGUAGE"; either half may be empty.
+INDUSTRY_OPTIONS = [
+    (_("any_industry"), ""),
+    ("Hollywood", "US:en"),
+    ("Bollywood (Hindi)", "IN:hi"),
+    ("Tollywood (Telugu)", "IN:te"),
+    ("Kollywood (Tamil)", "IN:ta"),
+    ("Mollywood (Malayalam)", "IN:ml"),
+    ("Sandalwood (Kannada)", "IN:kn"),
+    ("Bengali cinema", "IN:bn"),
+    ("Marathi cinema", "IN:mr"),
+    ("Punjabi cinema", "IN:pa"),
+    ("British", "GB:en"),
+    ("Korean", "KR:ko"),
+    ("Japanese / anime", "JP:ja"),
+    ("Chinese", "CN:zh"),
+    ("Nollywood (Nigeria)", "NG:"),
+    ("French", "FR:fr"),
+    ("Spanish", "ES:es"),
+    ("German", "DE:de"),
+    ("Italian", "IT:it"),
+    # Language only, when the country does not matter
+    (_("lang_only_english"), ":en"),
+    (_("lang_only_hindi"), ":hi"),
+    (_("lang_only_tamil"), ":ta"),
+    (_("lang_only_telugu"), ":te"),
+    (_("lang_only_korean"), ":ko"),
+    (_("lang_only_japanese"), ":ja"),
+    (_("lang_only_spanish"), ":es"),
 ]
 
 
@@ -145,7 +170,7 @@ class ColombusApp(App[None]):
                     yield Select([], prompt=_("category_prompt"), id="genre")
                 with Horizontal(id="filters"):
                     yield Select(
-                        LANGUAGE_OPTIONS, value="", allow_blank=False, id="language"
+                        INDUSTRY_OPTIONS, value="", allow_blank=False, id="industry"
                     )
                     yield Select(
                         SORT_OPTIONS,
@@ -224,13 +249,28 @@ class ColombusApp(App[None]):
         )
 
     @property
+    def _industry(self) -> tuple[str, str, str]:
+        """(origin country, original language, label) for the picker."""
+        raw = str(self.query_one("#industry", Select).value or "")
+        if not raw:
+            return "", "", ""
+        country, _sep, language = raw.partition(":")
+        label = next(
+            (name for name, value in INDUSTRY_OPTIONS if value == raw), ""
+        )
+        return country, language, label
+
+    @property
     def _discover_filters(self) -> Filters:
         decade = int(self.query_one("#decade", Select).value or 0)
+        country, _language, label = self._industry
         return Filters(
             sort_by=str(self.query_one("#sort", Select).value),
             min_rating=float(self.query_one("#min-rating", Select).value or 0),
             year_from=decade or None,
             year_to=(decade + 9) if decade else None,
+            origin_country=country,
+            industry_label=label,
         )
 
     # ------------------------------------------------------------------ workers
@@ -249,7 +289,7 @@ class ColombusApp(App[None]):
                 empty = _("nothing_trending")
             elif self._section == CATEGORIES_TAB:
                 genre = self.query_one("#genre", Select).value
-                language = str(self.query_one("#language", Select).value or "")
+                _country, language, _label = self._industry
                 if (
                     genre is Select.BLANK
                     and not language
@@ -410,7 +450,7 @@ class ColombusApp(App[None]):
         if self._section == CATEGORIES_TAB:
             self.load_list()
 
-    @on(Select.Changed, "#language")
+    @on(Select.Changed, "#industry")
     @on(Select.Changed, "#sort")
     @on(Select.Changed, "#min-rating")
     @on(Select.Changed, "#decade")

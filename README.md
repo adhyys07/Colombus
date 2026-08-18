@@ -51,7 +51,7 @@ Five sections share one results list, switched with the tabs or `ctrl+t`:
 | ------- | ------------- |
 | **Search** | Titles — or people — matching your query |
 | **Trending** | What's trending today or this week |
-| **Categories** | Everything in a genre, language, decade or rating band |
+| **Categories** | Everything in a genre, industry, decade or rating band |
 | **Watchlist** | Titles you saved with `ctrl+d`, newest first |
 | **Watched** | Titles you marked seen with `f6` |
 
@@ -94,10 +94,23 @@ an action.
 
 ## Filtering
 
-Categories opens with two dropdowns. `ctrl+f` reveals the rest — language,
+Categories opens with two dropdowns. `ctrl+f` reveals the rest — industry,
 sort order, minimum rating and decade — and hides them again. Whatever is
 active is named in the results border, so the state stays visible even with
 the row collapsed.
+
+The **industry** picker covers Hollywood, Bollywood, Tollywood, Kollywood,
+Mollywood, Sandalwood, Bengali, Marathi and Punjabi cinema, plus British,
+Korean, Japanese, Chinese, Nollywood and the major European industries. TMDB
+has no notion of an industry, so each is an origin country paired with an
+original language — and the pairing matters: filtering on India alone returns
+Tamil and Malayalam films, so Bollywood is specifically India + Hindi. The
+same list ends with language-only entries for when the country does not
+matter.
+
+Combining them works as you would expect: Bollywood + 7.0+ + 1990s returns
+Dilwale Dulhania Le Jayenge, Kuch Kuch Hota Hai, Jo Jeeta Wohi Sikandar
+and Satya.
 
 Sorting by rating applies a vote-count floor automatically; without one TMDB
 returns obscure titles carrying a single 10/10 vote. Series are filtered on

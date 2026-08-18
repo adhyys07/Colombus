@@ -141,6 +141,11 @@ class Filters:
     min_rating: float = 0.0
     year_from: int | None = None
     year_to: int | None = None
+    # An "industry" is really an origin country plus an original language:
+    # IN alone returns Tamil and Malayalam films, not Bollywood.
+    origin_country: str = ""
+    industry_label: str = ""
+
 
     # Sorting by rating with no vote floor surfaces obscure titles carrying a
     # single 10/10 vote, so the two always travel together.
@@ -153,6 +158,8 @@ class Filters:
         if media_type == TV and sort_by.startswith("primary_release_date"):
             sort_by = "first_air_date" + sort_by[len("primary_release_date"):]
         params: dict[str, str] = {"sort_by": sort_by}
+        if self.origin_country:
+            params["with_origin_country"] = self.origin_country
 
         if sort_by.startswith("vote_average"):
             params["vote_count.gte"] = str(self.MIN_VOTES_FOR_RATING_SORT)
@@ -178,6 +185,9 @@ class Filters:
             and not self.min_rating
             and not self.year_from
             and not self.year_to
+            and not self.origin_country
+            # a language-only pick has no country but is still a filter
+            and not self.industry_label
         )
 
     def summary(self) -> str:
@@ -185,6 +195,8 @@ class Filters:
         if self.is_default:
             return ""
         bits = []
+        if self.industry_label:
+            bits.append(self.industry_label)
         if self.sort_by != "popularity.desc":
             bits.append(self.sort_by.split(".")[0].replace("_", " "))
         if self.min_rating:
