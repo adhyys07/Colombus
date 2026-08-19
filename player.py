@@ -57,6 +57,41 @@ def audio_available() -> bool:
     return shutil.which("ffplay") is not None
 
 
+# Trailer audio arrives already peaking at full scale (measured +0.2 dBTP,
+# mean -23.7 dB) with a very wide dynamic range (15.6 LU). There is no
+# headroom, so plain gain just clips: the quiet dialogue is the problem,
+# not the overall level.
+#
+# dynaudnorm normalises level over a moving window, which lifts the quiet
+# passages without pushing the peaks any higher - measured +4.0 dB mean at
+# a peak of -0.5 dB, where a flat 1.5x gain reached the ceiling for +3.5.
+# A plain compressor was tried first and is a trap: without makeup gain it
+# pulls the loud parts down faster than the gain lifts them (+0.2 dB net),
+# and with makeup=6 it clips hard.
+NORMALISE = "dynaudnorm=f=250:g=15"
+# level=disabled matters: alimiter otherwise auto-levels its output back
+# up to full scale after limiting, which throws away the headroom the
+# limiter just bought. Off, it holds the ceiling at -0.26 dBFS.
+LIMITER = "alimiter=limit=0.97:level=disabled"
+
+
+def _volume_filter(volume: int) -> list[str]:
+    """ffplay -af arguments for a volume percentage (100 = untouched).
+
+    Above 100 the normaliser comes first so the boost works on an evened
+    out signal, with the limiter last to catch whatever still overshoots.
+    """
+    if volume == 100:
+        return []
+    gain = volume / 100
+    chain = (
+        f"{NORMALISE},volume={gain:.2f},{LIMITER}"
+        if volume > 100
+        else f"volume={gain:.2f}"
+    )
+    return ["-af", chain]
+
+
 class AudioTrack:
     """The trailer's sound, played by ffplay with no window.
 
@@ -65,8 +100,9 @@ class AudioTrack:
     them together well enough for a trailer.
     """
 
-    def __init__(self, stream_url: str) -> None:
+    def __init__(self, stream_url: str, volume: int = 100) -> None:
         self.url = stream_url
+        self.volume = volume
         self._proc: subprocess.Popen | None = None
 
     def start(self) -> bool:
@@ -85,6 +121,7 @@ class AudioTrack:
                  # side gets its reconnects through STREAM_OPTIONS instead.
                  "-infbuf",
                  "-rw_timeout", OPEN_TIMEOUT_US,
+                 *_volume_filter(self.volume),
                  "-loglevel", "error", self.url],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -289,6 +326,7 @@ def play(
     max_lag: float = 0.15,
     audio_url: str | None = None,
     regrid=None,
+    volume: int = 100,
 ) -> int:
     """Drive playback in real time, dropping frames rather than falling behind.
 
@@ -317,7 +355,7 @@ def play(
         # Start sound only once the first frame is decoded, so the two do
         # not begin a decode-time apart.
         if audio_url:
-            audio = AudioTrack(audio_url)
+            audio = AudioTrack(audio_url, volume)
             audio.start()
         started = time.perf_counter()
         bars = Letterbox()

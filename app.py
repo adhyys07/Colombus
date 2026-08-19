@@ -646,6 +646,7 @@ class ColombusApp(App[None]):
                 # Once the letterbox bars are measured the picture is
                 # wider than 16:9, so it gets a fresh grid to fill.
                 regrid=lambda aspect: self.call_from_thread(pane.grid, aspect),
+                volume=self.config.trailer_volume,
             )
         except TrailerError as exc:
             self.call_from_thread(pane.show_message, str(exc), "red")

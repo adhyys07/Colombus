@@ -78,6 +78,10 @@ class Config:
     # Sharpening costs almost nothing next to decoding, so it is on by
     # default; COLOMBUS_TRAILER_SHARPEN=0 gets the plain bilinear picture.
     trailer_sharpen: bool = True
+    # Percent. 100 leaves the sound untouched; above that compresses the
+    # trailer's wide dynamic range before boosting, so quiet dialogue
+    # comes up without the already-full-scale peaks distorting.
+    trailer_volume: int = 100
 
     @property
     def language_code(self) -> str:
@@ -141,6 +145,7 @@ class Config:
             trailer_audio=(os.getenv("COLOMBUS_TRAILER_AUDIO") or "1").strip().lower()
             not in ("0", "false", "no", "off"),
             trailer_max_cols=max(0, _env_int("COLOMBUS_TRAILER_WIDTH", 0)),
+            trailer_volume=max(10, min(400, _env_int("COLOMBUS_TRAILER_VOLUME", 100))),
             trailer_sharpen=(os.getenv("COLOMBUS_TRAILER_SHARPEN") or "1")
             .strip()
             .lower()
