@@ -31,6 +31,7 @@ hiddenimports += [
     "widget",
     "player",
     "widgets.player",
+    "videoart",
     "i18n",
 ]
 
@@ -42,7 +43,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["matplotlib", "numpy", "pytest"],  # tkinter is needed by widget.py
+    excludes=["matplotlib", "pytest"],  # numpy powers videoart; tkinter the widget
     noarchive=False,
 )
 pyz = PYZ(a.pure)

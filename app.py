@@ -23,7 +23,6 @@ from textual.widgets import (
 
 from config import Config
 from i18n import _
-from widgets.artposter import braille_art
 from models import MOVIE, PERSON, TV, Filters, Movie, SearchHit
 from player import (
     TrailerError,
@@ -33,6 +32,7 @@ from player import (
     resolve_stream,
 )
 from service import MovieService
+from videoart import frame_strips
 from sources import TMDBError
 from widgets import (
     CastPane,
@@ -219,6 +219,7 @@ class ColombusApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.query_one(PlayerPane).max_cols = self.config.trailer_max_cols
         if self.config.offline:
             self.sub_title = f"{self.SUB_TITLE} - {_('offline')}"
         self._sync_controls()
@@ -569,6 +570,10 @@ class ColombusApp(App[None]):
 
     def stop_playback(self) -> None:
         self._stop_player.set()
+        try:
+            self.query_one(PosterPane).display = True
+        except Exception:
+            pass  # during shutdown the widget may already be gone
 
     def action_play_trailer(self) -> None:
         """f7 toggles: play the trailer here, or stop one already running."""
@@ -591,17 +596,19 @@ class ColombusApp(App[None]):
             return
 
         self.query_one("#info", TabbedContent).active = PLAYER_PANE
+        # The poster is redundant while the trailer plays, and its rows
+        # roughly double the picture.
+        self.query_one(PosterPane).display = False
+        self.refresh(layout=True)
         pane.show_message(_("trailer_resolving"))
-        cols, rows = pane.grid()
-        # Starts set: 'set' means nothing is playing, so the first
-        # f7 reads as play rather than stop.
         self._stop_player = threading.Event()  # clear: a run is now in flight
-        self.run_trailer(trailer.url, cols, rows, self._stop_player)
+        # The grid is measured inside the worker: hiding the poster above
+        # only takes effect after Textual relayouts, and reading it here
+        # would size the picture to the old, smaller pane.
+        self.run_trailer(trailer.url, self._stop_player)
 
     @work(thread=True, exclusive=True, group="player")
-    def run_trailer(
-        self, url: str, cols: int, rows: int, stop: threading.Event
-    ) -> None:
+    def run_trailer(self, url: str, stop: threading.Event) -> None:
         """Decoding and rendering are blocking work, so this is a thread
         worker that paints through call_from_thread."""
         pane = self.query_one(PlayerPane)
@@ -610,6 +617,8 @@ class ColombusApp(App[None]):
             if stop.is_set():
                 return
             self.call_from_thread(pane.show_message, _("trailer_buffering"))
+            # Layout has settled by now, so this is the real pane size.
+            cols, rows = self.call_from_thread(pane.grid)
             # The muxed stream carries the sound too, so the same URL
             # feeds ffplay.
             with_audio = self.config.trailer_audio and audio_available()
@@ -618,7 +627,7 @@ class ColombusApp(App[None]):
                 lambda frame: self.call_from_thread(pane.show_frame, frame),
                 cols,
                 rows,
-                braille_art,
+                frame_strips,
                 stop=stop,
                 audio_url=stream_url if with_audio else None,
             )

@@ -74,6 +74,7 @@ class Config:
     ui_language: str = DEFAULT_UI_LANGUAGE
     offline: bool = False
     trailer_audio: bool = True
+    trailer_max_cols: int = 0  # 0 = fill the pane
 
     @property
     def language_code(self) -> str:
@@ -136,4 +137,5 @@ class Config:
             in ("1", "true", "yes", "on"),
             trailer_audio=(os.getenv("COLOMBUS_TRAILER_AUDIO") or "1").strip().lower()
             not in ("0", "false", "no", "off"),
+            trailer_max_cols=max(0, _env_int("COLOMBUS_TRAILER_WIDTH", 0)),
         )

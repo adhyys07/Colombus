@@ -69,7 +69,7 @@ The right-hand pane carries six tabs, cycled with `f2`:
 | **Cast** | Billed roles — pick one to browse that person's filmography |
 | **Episodes** | Season picker, a braille chart of episode ratings, then the episode list. Series only |
 | **Stats** | Your watch history: hours, top genres, decades, recent titles |
-| **Trailer** | The trailer played as braille art, in the terminal |
+| **Trailer** | The trailer played as full-colour half-block art, in the terminal |
 
 ## Keys
 
@@ -169,7 +169,7 @@ interface through the Windows App SDK, which a Python project cannot provide.
 
 ## Playing trailers in the terminal
 
-`f7` plays the selected title's trailer as braille art in the Trailer tab;
+`f7` plays the selected title's trailer as colour art in the Trailer tab;
 pressing it again stops. `f4` still opens it in a browser, which is what you
 want to actually watch something.
 
@@ -189,10 +189,17 @@ residual offset is ffplay's own startup latency. Set
 `COLOMBUS_TRAILER_AUDIO=0` for silent playback, and note that without ffmpeg
 installed you simply get no sound rather than an error.
 
-Set your expectations: the grid is capped at 60x20 cells, so you are watching
-roughly 120x80 pixels. Rendering is the bottleneck - about 56fps at 50x16 but
-only 10fps at 100x32 - so playback keeps real time by **dropping frames**
-rather than running in slow motion.
+Frames are drawn with half-block characters (`▀`), which carry two
+true-colour pixels per cell - the foreground paints the top pixel, the
+background the bottom. That is why the picture is in full colour rather than
+the monochrome dots braille would give. The poster hides while a trailer
+plays, so the picture gets the whole right-hand column: on a 200-column
+terminal that is about 123x70 pixels.
+
+Playback keeps real time by **dropping frames** rather than running in slow
+motion, so a smaller pane plays more smoothly than a large one. Cap the width
+with `COLOMBUS_TRAILER_WIDTH=80` if you would rather have smoothness than
+size.
 
 If playback fails with a yt-dlp error, update it: `pip install -U yt-dlp`.
 YouTube's bot checks break older builds regularly.
@@ -245,6 +252,7 @@ For the packaged `.exe`, a `.env` beside the executable is picked up too.
 | `COLOMBUS_CACHE_TTL` | `604800` (7 days) | cache lifetime in seconds; `0` never expires |
 | `COLOMBUS_OFFLINE` | unset | `1` to serve only what is cached |
 | `COLOMBUS_TRAILER_AUDIO` | `1` | `0` plays in-terminal trailers silently |
+| `COLOMBUS_TRAILER_WIDTH` | `0` | cap the trailer width in cells; `0` fills the pane |
 | `COLOMBUS_REGION` | `US` | where-to-watch region |
 | `COLOMBUS_LANGUAGE` | `en-US` | language of TMDB content |
 | `COLOMBUS_UI_LANGUAGE` | `en` | language of the app's own labels |

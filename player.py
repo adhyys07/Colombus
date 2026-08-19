@@ -16,6 +16,15 @@ PLAYER_CLIENTS = "youtube:player_client=android,web_safari"
 FORMAT = "best[height<=360]/best[height<=480]/best"
 RESOLVE_TIMEOUT = 90
 OPEN_TIMEOUT_US = "15000000"  # ffmpeg rw_timeout, in microseconds
+# googlevideo drops long-lived connections now and then; without these a
+# transient hiccup ends playback with a bare "I/O error".
+STREAM_OPTIONS = {
+    "rw_timeout": OPEN_TIMEOUT_US,
+    "reconnect": "1",
+    "reconnect_streamed": "1",
+    "reconnect_on_network_error": "1",
+    "reconnect_delay_max": "5",
+}
 
 
 class TrailerError(RuntimeError):
@@ -148,7 +157,7 @@ def iter_frames(stream_url: str, stop=None) -> Iterator[Frame]:
         raise TrailerError("PyAV is not installed (pip install av).") from exc
 
     try:
-        container = av.open(stream_url, options={"rw_timeout": OPEN_TIMEOUT_US})
+        container = av.open(stream_url, options=dict(STREAM_OPTIONS))
     except Exception as exc:  # av raises a family of errors
         raise TrailerError(f"Could not open the video stream: {exc}") from exc
 
@@ -159,8 +168,10 @@ def iter_frames(stream_url: str, stop=None) -> Iterator[Frame]:
             if stop is not None and stop.is_set():
                 return
             yield Frame(image=frame.to_image(), pts=float(frame.time or 0.0))
-    except Exception as exc:
-        raise TrailerError(f"Playback stopped: {exc}") from exc
+    except Exception:
+        # The stream died mid-play despite reconnects. Whatever has been
+        # shown stays on screen; ending quietly beats a wall of URL.
+        return
     finally:
         container.close()
 

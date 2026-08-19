@@ -1,37 +1,96 @@
-"""Pane that plays a trailer as terminal art."""
+"""Pane that plays a trailer as colour half-block art.
+
+Frames are pushed in as ready-made Strips and returned straight from
+render_line, which is Textual's fastest drawing path - no Rich markup
+parsing per frame.
+"""
 
 from __future__ import annotations
 
-from rich.console import RenderableType
-from textual.app import ComposeResult
-from textual.containers import Container
-from textual.widgets import Static
+from rich.segment import Segment
+from rich.style import Style
+from textual.strip import Strip
+from textual.widget import Widget
 
 from i18n import _
-from render import message_renderable
 
-# Cost scales with cell count: the renderer manages ~56fps at 50x16 but
-# only ~10fps at 100x32, so the grid is capped rather than filling the pane.
-MAX_COLS = 60
-MAX_ROWS = 20
+# Above this the renderer stops keeping real time on a modest machine.
+MAX_COLS = 200
+MAX_ROWS = 60
+# Trailers are 16:9; a half-block cell is one pixel wide and two tall, so
+# the pixel grid is cols x (rows*2) and stays square.
+ASPECT = 16 / 9
 
 
-class PlayerPane(Container):
-    def compose(self) -> ComposeResult:
-        yield Static(message_renderable(_("trailer_idle")), id="player-body")
+class PlayerPane(Widget):
+    """Draws either a message or the current video frame."""
 
-    @property
-    def _body(self) -> Static:
-        return self.query_one("#player-body", Static)
+    DEFAULT_CSS = """
+    PlayerPane {
+        height: 1fr;
+        background: $panel;
+    }
+    """
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._strips: list[Strip] = []
+        self._offset = 0
+        self._message: tuple[str, str] | None = (_("trailer_idle"), "dim")
+        # 0 = fill the pane; set from COLOMBUS_TRAILER_WIDTH
+        self.max_cols = 0
+
+    # ------------------------------------------------------------- sizing
 
     def grid(self) -> tuple[int, int]:
-        """Frame size to render at, capped for speed and never zero."""
-        cols = min(MAX_COLS, max(20, self.size.width - 2))
-        rows = min(MAX_ROWS, max(8, self.size.height - 2))
+        """Largest 16:9 grid that fits the pane, capped for speed."""
+        cap = self.max_cols or MAX_COLS
+        width = max(10, min(cap, MAX_COLS, self.size.width))
+        height = max(4, self.size.height)
+        rows = max(2, min(MAX_ROWS, height, round(width / ASPECT / 2)))
+        cols = max(10, min(width, cap, MAX_COLS, round(rows * 2 * ASPECT)))
         return cols, rows
 
-    def show_frame(self, frame: RenderableType) -> None:
-        self._body.update(frame)
+    # ------------------------------------------------------------ content
+
+    def show_frame(self, strips: list[Strip]) -> None:
+        self._strips = strips
+        self._message = None
+        # keep the picture vertically centred in the pane
+        self._offset = max(0, (self.size.height - len(strips)) // 2)
+        self.refresh()
 
     def show_message(self, text: str, style: str = "dim") -> None:
-        self._body.update(message_renderable(text, style))
+        self._message = (text, style)
+        self._strips = []
+        self.refresh()
+
+    # ------------------------------------------------------------ drawing
+
+    def render_line(self, y: int) -> Strip:
+        width = self.size.width
+        if self._message is not None:
+            return self._message_line(y, width)
+
+        index = y - self._offset
+        if 0 <= index < len(self._strips):
+            strip = self._strips[index]
+            pad = max(0, (width - strip.cell_length) // 2)
+            if pad:
+                strip = Strip(
+                    [Segment(" " * pad), *strip._segments], strip.cell_length + pad
+                )
+            return strip.adjust_cell_length(width)
+        return Strip.blank(width)
+
+    def _message_line(self, y: int, width: int) -> Strip:
+        text, style = self._message or ("", "dim")
+        lines = text.splitlines() or [""]
+        top = max(0, (self.size.height - len(lines)) // 2)
+        if not (top <= y < top + len(lines)):
+            return Strip.blank(width)
+        line = lines[y - top][:width]
+        pad = max(0, (width - len(line)) // 2)
+        return Strip(
+            [Segment(" " * pad + line, Style.parse(style))], pad + len(line)
+        ).adjust_cell_length(width)
