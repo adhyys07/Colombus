@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 from rich.color import Color
 from rich.segment import Segment
 from rich.style import Style
@@ -14,6 +14,26 @@ UPPER_HALF = "▀"
 COLOUR_MASK = 0xFC
 _STYLE_CACHE: dict[tuple[int, int], Style] = {}
 _CACHE_LIMIT = 200_000
+
+# Downscaling a 16:9 frame into a cell grid throws away most of the
+# pixels, which softens edges badly at this size. LANCZOS keeps the detail
+# that survives, then a light unsharp mask puts the edge contrast back so
+# faces and text read at a glance. Saturation is nudged up because the
+# 6-bit quantisation below flattens colour slightly.
+#
+# Deliberately no autocontrast: it is computed per frame, so a bright
+# object entering the shot would re-map the whole picture and the video
+# would pump between frames.
+SHARPEN_PERCENT = 80
+SHARPEN_THRESHOLD = 2
+SATURATION = 1.15
+_ENHANCE = True
+
+
+def set_enhance(enabled: bool) -> None:
+    """Turn the sharpening pass on or off (COLOMBUS_TRAILER_SHARPEN)."""
+    global _ENHANCE
+    _ENHANCE = enabled
 
 
 def _packed_style(top: int, bottom: int) -> Style:
@@ -41,7 +61,16 @@ def frame_strips(image: Image.Image, cols: int, rows: int) -> list[Strip]:
     if cols < 1 or rows < 1:
         return []
 
-    resized = image.convert("RGB").resize((cols, rows * 2), Image.BILINEAR)
+    if _ENHANCE:
+        resized = image.convert("RGB").resize((cols, rows * 2), Image.LANCZOS)
+        resized = resized.filter(
+            ImageFilter.UnsharpMask(
+                radius=1, percent=SHARPEN_PERCENT, threshold=SHARPEN_THRESHOLD
+            )
+        )
+        resized = ImageEnhance.Color(resized).enhance(SATURATION)
+    else:
+        resized = image.convert("RGB").resize((cols, rows * 2), Image.BILINEAR)
     pixels = np.asarray(resized, dtype=np.uint32) & COLOUR_MASK
     # pack to 0xRRGGBB so a cell is two ints and comparisons are cheap
     packed = (pixels[:, :, 0] << 16) | (pixels[:, :, 1] << 8) | pixels[:, :, 2]

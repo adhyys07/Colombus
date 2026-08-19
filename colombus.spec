@@ -48,18 +48,35 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# A onedir build: the app runs straight from the folder.
+#
+# The onefile format packs everything into one .exe and unpacks it to %TEMP%
+# on every launch. With numpy and av's ffmpeg libraries bundled that is well
+# over 200MB per run, which fails outright on a nearly full disk:
+#   Failed to extract av.libs\avcodec-*.dll: decompression resulted in
+#   return code -1
+# onedir needs no extraction, starts faster, and never touches %TEMP%.
 exe = EXE(
-    pyz, a.scripts, a.binaries, a.datas, [],
+    pyz, a.scripts, [],
+    exclude_binaries=True,
     name="colombus",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    runtime_tmpdir=None,
     console=True,          # a TUI needs a console
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    name="colombus",
 )

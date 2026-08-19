@@ -75,6 +75,9 @@ class Config:
     offline: bool = False
     trailer_audio: bool = True
     trailer_max_cols: int = 0  # 0 = fill the pane
+    # Sharpening costs almost nothing next to decoding, so it is on by
+    # default; COLOMBUS_TRAILER_SHARPEN=0 gets the plain bilinear picture.
+    trailer_sharpen: bool = True
 
     @property
     def language_code(self) -> str:
@@ -138,4 +141,8 @@ class Config:
             trailer_audio=(os.getenv("COLOMBUS_TRAILER_AUDIO") or "1").strip().lower()
             not in ("0", "false", "no", "off"),
             trailer_max_cols=max(0, _env_int("COLOMBUS_TRAILER_WIDTH", 0)),
+            trailer_sharpen=(os.getenv("COLOMBUS_TRAILER_SHARPEN") or "1")
+            .strip()
+            .lower()
+            not in ("0", "false", "no", "off"),
         )

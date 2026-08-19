@@ -29,10 +29,10 @@ from player import (
     audio_available,
     missing_tools,
     play,
-    resolve_stream,
+    resolve_streams,
 )
 from service import MovieService
-from videoart import frame_strips
+from videoart import frame_strips, set_enhance
 from sources import TMDBError
 from widgets import (
     CastPane,
@@ -568,12 +568,27 @@ class ColombusApp(App[None]):
 
     # ------------------------------------------------------------ trailer
 
+    # Widgets folded away while a trailer plays. The picture is sized from
+    # the pane, so every row and column these give back becomes real
+    # resolution - hiding them roughly doubles the pixel count.
+    CINEMA_HIDDEN = ("#left", "#search", "#tabs")
+
+    def _set_cinema(self, on: bool) -> None:
+        """Collapse the surrounding UI so the trailer fills the window."""
+        for selector in self.CINEMA_HIDDEN:
+            try:
+                self.query_one(selector).display = not on
+            except Exception:
+                pass  # a widget may be gone during shutdown
+        try:
+            self.query_one(PosterPane).display = not on
+        except Exception:
+            pass
+        self.refresh(layout=True)
+
     def stop_playback(self) -> None:
         self._stop_player.set()
-        try:
-            self.query_one(PosterPane).display = True
-        except Exception:
-            pass  # during shutdown the widget may already be gone
+        self._set_cinema(False)
 
     def action_play_trailer(self) -> None:
         """f7 toggles: play the trailer here, or stop one already running."""
@@ -596,10 +611,8 @@ class ColombusApp(App[None]):
             return
 
         self.query_one("#info", TabbedContent).active = PLAYER_PANE
-        # The poster is redundant while the trailer plays, and its rows
-        # roughly double the picture.
-        self.query_one(PosterPane).display = False
-        self.refresh(layout=True)
+        self._set_cinema(True)
+        set_enhance(self.config.trailer_sharpen)
         pane.show_message(_("trailer_resolving"))
         self._stop_player = threading.Event()  # clear: a run is now in flight
         # The grid is measured inside the worker: hiding the poster above
@@ -613,14 +626,14 @@ class ColombusApp(App[None]):
         worker that paints through call_from_thread."""
         pane = self.query_one(PlayerPane)
         try:
-            stream_url = resolve_stream(url)
+            stream_url, audio_url = resolve_streams(url)
             if stop.is_set():
                 return
             self.call_from_thread(pane.show_message, _("trailer_buffering"))
             # Layout has settled by now, so this is the real pane size.
             cols, rows = self.call_from_thread(pane.grid)
-            # The muxed stream carries the sound too, so the same URL
-            # feeds ffplay.
+            # A separate audio stream is the better one when yt-dlp offers
+            # it; otherwise the sound rides in the muxed video URL.
             with_audio = self.config.trailer_audio and audio_available()
             play(
                 stream_url,
@@ -629,13 +642,17 @@ class ColombusApp(App[None]):
                 rows,
                 frame_strips,
                 stop=stop,
-                audio_url=stream_url if with_audio else None,
+                audio_url=(audio_url or stream_url) if with_audio else None,
+                # Once the letterbox bars are measured the picture is
+                # wider than 16:9, so it gets a fresh grid to fill.
+                regrid=lambda aspect: self.call_from_thread(pane.grid, aspect),
             )
         except TrailerError as exc:
             self.call_from_thread(pane.show_message, str(exc), "red")
             return
         finally:
             stop.set()
+            self.call_from_thread(self._set_cinema, False)
         self.call_from_thread(pane.show_message, _("trailer_ended"))
 
     def action_trailer(self) -> None:

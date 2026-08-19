@@ -8,11 +8,22 @@ import weakref
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+import numpy as np
 from PIL import Image
 
-# The bundled extractor breaks against YouTube's bot checks on older
-# yt-dlp builds; these clients still resolve. Harmless on current ones.
+# This pin is load-bearing, and not only for old yt-dlp builds. The
+# default clients do resolve on a current yt-dlp and advertise far better
+# formats - separate opus audio, video past 1080p - but every one of those
+# URLs answers 403 to ffmpeg: they are bound to a client handshake we
+# cannot reproduce, and sending the matching User-Agent is not enough.
+# The `android` client's muxed 360p stream is the only one that actually
+# plays, so it stays pinned. Do not "upgrade" this without checking that
+# ffprobe can still open the URL it returns.
 PLAYER_CLIENTS = "youtube:player_client=android,web_safari"
+# Muxed first, deliberately. A separate video+audio pair would carry
+# better sound, but those formats are exactly the ones YouTube now blocks
+# (see PLAYER_CLIENTS). yt-dlp -g prints one URL per selected stream, so
+# resolve_streams still handles a pair should one ever become playable.
 FORMAT = "best[height<=360]/best[height<=480]/best"
 RESOLVE_TIMEOUT = 90
 OPEN_TIMEOUT_US = "15000000"  # ffmpeg rw_timeout, in microseconds
@@ -64,6 +75,16 @@ class AudioTrack:
         try:
             self._proc = subprocess.Popen(
                 ["ffplay", "-nodisp", "-vn", "-autoexit",
+                 # An audio dropout is far more noticeable than a dropped
+                 # frame, so let the buffer grow without limit rather than
+                 # underrun on a slow stretch of network.
+                 #
+                 # Only these two: ffplay's parser rejects the http
+                 # protocol's -reconnect* options and exits on an unknown
+                 # flag, which would leave the trailer silent. The video
+                 # side gets its reconnects through STREAM_OPTIONS instead.
+                 "-infbuf",
+                 "-rw_timeout", OPEN_TIMEOUT_US,
                  "-loglevel", "error", self.url],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -93,6 +114,75 @@ class AudioTrack:
         self.stop()
 
 
+
+class Letterbox:
+    """Finds the black bars a widescreen trailer carries inside its frame.
+
+    Most trailers are 2.39:1 pillar-boxed into a 16:9 stream, so around a
+    quarter of every frame is black. Those rows cost real resolution: the
+    grid is sized from the picture's aspect, so cropping them lets the
+    remaining picture claim the width the bars were wasting.
+
+    The bars are measured over several frames and then fixed for the rest
+    of playback. Re-measuring per frame would let a dark shot pull the
+    crop inwards and make the picture breathe.
+    """
+
+    SAMPLES = 20  # usable frames to look at before locking the crop
+    BLACK = 18  # luma at or below this counts as bar, not picture
+    MIN_BAR = 0.02  # ignore anything smaller; it is just a dark edge
+
+    def __init__(self) -> None:
+        self.box: tuple[int, int, int, int] | None = None
+        self.locked = False
+        self._seen: list[tuple[int, int, int, int]] = []
+
+    def _measure(self, image: Image.Image) -> tuple[int, int, int, int] | None:
+        grey = np.asarray(image.convert("L"))
+        rows = np.flatnonzero(grey.max(axis=1) > self.BLACK)
+        cols = np.flatnonzero(grey.max(axis=0) > self.BLACK)
+        if rows.size == 0 or cols.size == 0:
+            return None  # a fade to black tells us nothing
+        return int(cols[0]), int(rows[0]), int(cols[-1]) + 1, int(rows[-1]) + 1
+
+    def feed(self, image: Image.Image) -> None:
+        """Offer a frame towards the measurement, until the crop locks."""
+        if self.locked:
+            return
+        box = self._measure(image)
+        if box is None:
+            return
+        self._seen.append(box)
+        if len(self._seen) < self.SAMPLES:
+            return
+
+        # The widest extent any sampled frame showed: a crop that never
+        # cuts into real picture, whatever the darkest shot suggested.
+        left = min(b[0] for b in self._seen)
+        top = min(b[1] for b in self._seen)
+        right = max(b[2] for b in self._seen)
+        bottom = max(b[3] for b in self._seen)
+        width, height = image.size
+        trimmed = (width - (right - left)) / width, (height - (bottom - top)) / height
+        self.box = (
+            (left, top, right, bottom)
+            if max(trimmed) >= self.MIN_BAR
+            else None
+        )
+        self.locked = True
+
+    def apply(self, image: Image.Image) -> Image.Image:
+        return image.crop(self.box) if self.box else image
+
+    @property
+    def aspect(self) -> float | None:
+        """Aspect of the cropped picture, once known."""
+        if not self.locked or self.box is None:
+            return None
+        left, top, right, bottom = self.box
+        return (right - left) / max(1, bottom - top)
+
+
 @dataclass
 class Frame:
     """A decoded frame plus the moment it should be shown."""
@@ -113,37 +203,50 @@ def missing_tools() -> list[str]:
     return missing
 
 
-def resolve_stream(video_url: str, timeout: int = RESOLVE_TIMEOUT) -> str:
-    """Ask yt-dlp for a direct stream URL. Blocking; run it off the UI thread."""
+def resolve_streams(
+    video_url: str, timeout: int = RESOLVE_TIMEOUT
+) -> tuple[str, str | None]:
+    """Direct stream URLs for a video, as (video, audio).
+
+    `audio` is None when yt-dlp fell back to a muxed stream, in which case
+    the sound already rides in the video URL. Blocking; run it off the UI
+    thread.
+    """
     if shutil.which("yt-dlp") is None:
         raise TrailerError(
             "yt-dlp is not installed.\nInstall it with: pip install -U yt-dlp"
         )
-    try:
-        result = subprocess.run(
-            [
-                "yt-dlp", "-g", "-f", FORMAT, "--no-warnings",
-                "--extractor-args", PLAYER_CLIENTS, video_url,
-            ],
+    def run(extra: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["yt-dlp", "-g", "-f", FORMAT, "--no-warnings", *extra, video_url],
             capture_output=True,
             text=True,
             timeout=timeout,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+
+    try:
+        result = run(["--extractor-args", PLAYER_CLIENTS])
     except subprocess.TimeoutExpired as exc:
         raise TrailerError("yt-dlp timed out resolving the trailer.") from exc
     except OSError as exc:
         raise TrailerError(f"Could not run yt-dlp: {exc}") from exc
 
-    url = (result.stdout or "").strip().splitlines()
-    if result.returncode != 0 or not url:
+    urls = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    if result.returncode != 0 or not urls:
         detail = (result.stderr or "").strip().splitlines()
         reason = detail[-1] if detail else "no stream URL returned"
         raise TrailerError(
             f"yt-dlp could not resolve the trailer.\n{reason}\n"
             "An outdated yt-dlp is the usual cause: pip install -U yt-dlp"
         )
-    return url[0]
+    # Two lines means a video+audio pair, in that order; one means muxed.
+    return (urls[0], urls[1] if len(urls) > 1 else None)
+
+
+def resolve_stream(video_url: str, timeout: int = RESOLVE_TIMEOUT) -> str:
+    """The video URL alone, for callers that do not handle a pair."""
+    return resolve_streams(video_url, timeout)[0]
 
 
 def iter_frames(stream_url: str, stop=None) -> Iterator[Frame]:
@@ -185,6 +288,7 @@ def play(
     stop=None,
     max_lag: float = 0.15,
     audio_url: str | None = None,
+    regrid=None,
 ) -> int:
     """Drive playback in real time, dropping frames rather than falling behind.
 
@@ -195,6 +299,12 @@ def play(
     With `audio_url`, ffplay plays the sound alongside. The audio clock and
     the video clock are both real time, so they stay together; the residual
     offset is ffplay's own startup latency.
+
+    Black letterbox bars are detected over the first frames and cropped
+    away. `regrid`, if given, is called once with the cropped picture's
+    aspect and returns the (cols, rows) to use from then on - the picture
+    is wider than 16:9 once the bars are gone, so it earns back the width
+    they were occupying.
     """
     audio: AudioTrack | None = None
     drawn = 0
@@ -210,7 +320,9 @@ def play(
             audio = AudioTrack(audio_url)
             audio.start()
         started = time.perf_counter()
-        draw(renderer(first.image, cols, rows))
+        bars = Letterbox()
+        bars.feed(first.image)
+        draw(renderer(bars.apply(first.image), cols, rows))
         drawn = 1
 
         for frame in frames:
@@ -221,7 +333,14 @@ def play(
                 time.sleep(min(frame.pts - elapsed, 1.0))  # ahead: wait
             elif frame.pts < elapsed - max_lag:
                 continue  # behind: skip this frame entirely
-            draw(renderer(frame.image, cols, rows))
+
+            if not bars.locked:
+                bars.feed(frame.image)
+                if bars.locked and regrid is not None:
+                    aspect = bars.aspect
+                    if aspect is not None:
+                        cols, rows = regrid(aspect)
+            draw(renderer(bars.apply(frame.image), cols, rows))
             drawn += 1
     finally:
         if audio is not None:

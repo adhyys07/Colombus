@@ -15,8 +15,11 @@ from textual.widget import Widget
 from i18n import _
 
 # Above this the renderer stops keeping real time on a modest machine.
-MAX_COLS = 200
-MAX_ROWS = 60
+# Measured on real video at ~36 fps for 171x48; cost scales with the cell
+# count, so 240 columns still renders faster than the stream decodes.
+# Worth raising only alongside a fresh measurement.
+MAX_COLS = 240
+MAX_ROWS = 80
 # Trailers are 16:9; a half-block cell is one pixel wide and two tall, so
 # the pixel grid is cols x (rows*2) and stays square.
 ASPECT = 16 / 9
@@ -42,13 +45,18 @@ class PlayerPane(Widget):
 
     # ------------------------------------------------------------- sizing
 
-    def grid(self) -> tuple[int, int]:
-        """Largest 16:9 grid that fits the pane, capped for speed."""
+    def grid(self, aspect: float = ASPECT) -> tuple[int, int]:
+        """Largest grid of the given aspect that fits the pane.
+
+        `aspect` is the picture's real width-to-height ratio, which is
+        wider than 16:9 once letterbox bars have been cropped away.
+        """
+        aspect = max(1.0, min(3.0, aspect))
         cap = self.max_cols or MAX_COLS
         width = max(10, min(cap, MAX_COLS, self.size.width))
         height = max(4, self.size.height)
-        rows = max(2, min(MAX_ROWS, height, round(width / ASPECT / 2)))
-        cols = max(10, min(width, cap, MAX_COLS, round(rows * 2 * ASPECT)))
+        rows = max(2, min(MAX_ROWS, height, round(width / aspect / 2)))
+        cols = max(10, min(width, cap, MAX_COLS, round(rows * 2 * aspect)))
         return cols, rows
 
     # ------------------------------------------------------------ content
